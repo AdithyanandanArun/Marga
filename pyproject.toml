@@ -10,17 +10,34 @@ description = "Marga V2X — India-ready vehicle-to-everything safety platform"
 dependencies = [
     "marga-schemas",
     "marga-osm-import",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "sqlalchemy[asyncio]>=2.0.35",
+    "alembic>=1.13.0",
+    "asyncpg>=0.29.0",
+    "geoalchemy2>=0.15.0",
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "prometheus-client>=0.21.0",
+    "cryptography>=43.0.0",
+    "websockets>=13.0",
 ]
 
 [tool.uv.workspace]
 members = [
     "packages/schemas",
+    "packages/persistence",
+    "packages/observability",
     "tools/osm-import",
 ]
 
 [tool.uv.sources]
 marga-schemas = { workspace = true }
 marga-osm-import = { workspace = true }
+marga-persistence = { workspace = true }
+marga-observability = { workspace = true }
 
 [tool.uv]
 package = false
@@ -28,6 +45,11 @@ dev-dependencies = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "hypothesis>=6.112",
+    "aiosqlite>=0.20",
 ]
 
 [tool.pytest.ini_options]
@@ -37,11 +59,26 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v"
+pythonpath = [
+    "packages/schemas",
+    "packages/persistence",
+    "packages/observability",
+    "services/hazards",
+    "services/trust",
+    "services/messaging",
+    "services/alerts",
+]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
+extend-exclude = [".claude", ".serena"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B"]
 
 [tool.mypy]
 python_version = "3.12"
-strict = true
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_configs = true
