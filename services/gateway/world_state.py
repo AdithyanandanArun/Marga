@@ -11,7 +11,15 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from packages.schemas.canonical import Hazard, HazardState, HazardType, PedestrianState, VehicleState
+from packages.schemas.canonical import (
+    ConnectivityEvent,
+    Hazard,
+    HazardState,
+    HazardType,
+    PedestrianState,
+    PositionQualityEvent,
+    VehicleState,
+)
 from packages.schemas.hazards import HazardObservation
 from services.integration.canonical_bridge import vehicle_from_adapter_event
 from services.position import PositionFusionService, predict_trajectory
@@ -27,6 +35,10 @@ _entities: dict[tuple[EntityType, str], dict[str, Any]] = {}
 _subscribers: list[asyncio.Queue[dict[str, Any]]] = []
 _position_fusion = PositionFusionService()
 _risk_engine = RiskEngine()
+
+# Latest connectivity state and per-actor position quality (enriched in every WS delta)
+_connectivity_state: dict[str, Any] | None = None
+_position_quality: dict[str, dict[str, Any]] = {}  # actor_id → PositionQualityEvent dict
 
 
 def _now() -> str:
@@ -54,6 +66,10 @@ def _world_delta(
     # Existing dashboard revisions expect this legacy field. New clients use
     # the canonical upserts/deletes contract above.
     payload["actors"] = [item["data"] for item in _entities_as_list("vehicle")]
+    # Connectivity and position-quality are broadcast in every delta so the
+    # dashboard can always show the current resilience state.
+    payload["connectivity"] = _connectivity_state
+    payload["position_quality"] = dict(_position_quality)
     return payload
 
 
@@ -198,6 +214,35 @@ async def ingest_pedestrian(state: PedestrianState) -> dict[str, Any]:
 @router.post("/v1/ingest/hazard-observation", status_code=202)
 async def ingest_hazard(observation: HazardObservation) -> dict[str, Any]:
     return await ingest_hazard_observation(observation)
+
+
+@router.post("/v1/ingest/connectivity", status_code=202)
+async def ingest_connectivity(event: ConnectivityEvent) -> dict[str, Any]:
+    """Record a connectivity state transition and broadcast to WS subscribers."""
+    global _connectivity_state
+    _connectivity_state = event.model_dump(mode="json")
+    _notify(_world_delta("delta", []))
+    logger.info("connectivity: mode=%s affected=%s", event.mode, event.affected_actor_ids)
+    return {"event_id": event.event_id, "mode": event.mode}
+
+
+@router.post("/v1/ingest/position-quality", status_code=202)
+async def ingest_position_quality(event: PositionQualityEvent) -> dict[str, Any]:
+    """Record a GPS quality event; propagate uncertainty into the live actor state."""
+    _position_quality[event.actor_id] = event.model_dump(mode="json")
+    actor = _entities.get(("vehicle", event.actor_id))
+    if actor is not None:
+        actor["position_uncertainty_m"] = event.uncertainty_m
+        _entities[("vehicle", event.actor_id)] = actor
+        _notify(_world_delta("delta", [_entity("vehicle", event.actor_id, actor)]))
+    logger.info("position_quality: actor=%s uncertainty=%.1fm", event.actor_id, event.uncertainty_m)
+    return {"event_id": event.event_id, "actor_id": event.actor_id, "uncertainty_m": event.uncertainty_m}
+
+
+@router.get("/v1/world-state/connectivity")
+async def get_connectivity() -> dict[str, Any]:
+    """Return the current connectivity state."""
+    return _connectivity_state or {"mode": "FULL"}
 
 
 @router.get("/v1/world-state/snapshot")

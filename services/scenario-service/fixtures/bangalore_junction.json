@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "scenario_id": "f3a8c2e1-9b74-4d6e-b5a3-1c8e0d7f2b45",
+  "name": "Bangalore Junction Resilience",
+  "description": "Deterministic mixed-traffic conflict scenario at Shivajinagar Junction (12.9822N, 77.5935E). An auto-rickshaw approaching from the west and a bus from the south converge at the junction while GPS degrades and internet connectivity is lost — testing full V2X resilience across 7 phases.",
+  "osm_region": "bangalore_shivajinagar",
+  "seed": 42,
+  "duration_s": 120.0,
+  "traffic_composition": {
+    "car_fraction": 0.0,
+    "truck_fraction": 0.0,
+    "bus_fraction": 0.0,
+    "motorcycle_fraction": 0.0,
+    "auto_rickshaw_fraction": 0.0,
+    "bicycle_fraction": 0.0,
+    "pedestrian_density": 0.0
+  },
+  "environment": {
+    "time_of_day_s": 30600.0,
+    "visibility_m": 8000.0,
+    "precipitation": "none",
+    "road_wetness": 0.0,
+    "wind_speed_mps": 1.2
+  },
+  "failure_schedule": [
+    {
+      "entry_id": "bjr-0001-gps-degrade",
+      "failure_type": "gps_degradation",
+      "start_sim_time_s": 20.0,
+      "duration_s": 25.0,
+      "parameters": {
+        "uncertainty_m": 25.0,
+        "affected_actors": ["ego_auto", "conflict_bus", "bg_car_1", "bg_car_2", "bg_moto"],
+        "reason": "Flyover structure causing multipath GPS interference at Shivajinagar junction"
+      }
+    },
+    {
+      "entry_id": "bjr-0002-internet-loss",
+      "failure_type": "connectivity_loss",
+      "start_sim_time_s": 25.0,
+      "duration_s": 15.0,
+      "parameters": {
+        "mode": "DIRECT_ONLY",
+        "affected_actors": ["all"],
+        "reason": "ISP backbone outage; V2X short-range radio still active within 300m"
+      }
+    },
+    {
+      "entry_id": "bjr-0003-conflict-approach",
+      "failure_type": "traffic_density_spike",
+      "start_sim_time_s": 28.0,
+      "duration_s": 10.0,
+      "parameters": {
+        "reason": "Ego auto and conflict bus converging on junction — TTC approaching zero"
+      }
+    }
+  ],
+  "tags": ["resilience-demo", "bangalore", "junction", "mixed-traffic", "v2x", "judging"]
+}

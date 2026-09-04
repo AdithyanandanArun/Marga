@@ -288,3 +288,35 @@ class RoadState(BaseModel):
     speed_limit_mps: float | None = None
     geometry: dict[str, Any] | None = None
     source: SourceType = SourceType.SIMULATION
+
+
+class ConnectivityMode(str, enum.Enum):
+    FULL = "FULL"
+    DIRECT_ONLY = "DIRECT_ONLY"
+    INTERMITTENT = "INTERMITTENT"
+    ISOLATED = "ISOLATED"
+
+
+class ConnectivityEvent(BaseModel):
+    """Canonical connectivity-state change event (internet / direct V2X)."""
+
+    schema_version: str = SCHEMA_VERSION
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    ts: datetime
+    mode: ConnectivityMode
+    affected_actor_ids: list[str] = Field(default_factory=list)
+    v2x_range_m: float | None = None
+    source: SourceType = SourceType.SIMULATION
+
+
+class PositionQualityEvent(BaseModel):
+    """Canonical GPS/position-quality degradation event for one actor."""
+
+    schema_version: str = SCHEMA_VERSION
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    ts: datetime
+    actor_id: str
+    uncertainty_m: float = Field(ge=0)
+    hdop: float | None = None
+    satellites: int | None = None
+    source: SourceType = SourceType.SIMULATION
