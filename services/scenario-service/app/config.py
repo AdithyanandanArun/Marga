@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     DATA_DIR: Path = Path("./data")
     SERVICE_NAME: str = "scenario-service"
     SIMULATION_ADAPTER_URL: str = "http://localhost:8001"
+    GATEWAY_URL: str = "http://localhost:8000"
 
     model_config = {"env_prefix": "SCENARIO_", "env_file": ".env", "extra": "ignore"}
 
