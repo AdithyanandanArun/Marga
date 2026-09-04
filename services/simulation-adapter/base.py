@@ -115,3 +115,4 @@ class AdapterConfig(BaseModel):
     seed: int = 42
     gui: bool = False
     port: int = 8813
+    v2x_range_m: float = 300.0  # Max V2X/RSU communication range in metres (India DSRC ~300 m)

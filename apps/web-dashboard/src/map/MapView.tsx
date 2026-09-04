@@ -124,12 +124,21 @@ export function MapView({ onEntityClick }: MapViewProps) {
 
     deckRef.current = deck;
 
-    const fixture = new FixturePlayer();
-    fixture.start(60, 500);
-    fixtureRef.current = fixture;
+    // Only start the fixture demo if the real backend WebSocket delivers no
+    // vehicles within 3 s. This keeps demo mode working offline while letting
+    // the live WS take precedence when the gateway is running.
+    const demoTimer = setTimeout(() => {
+      if (useWorldStore.getState().vehicles.size === 0 && !fixtureRef.current) {
+        const fixture = new FixturePlayer();
+        fixture.start(); // defaults: 20 vehicles, 100 ms ticks
+        fixtureRef.current = fixture;
+      }
+    }, 3000);
 
     return () => {
-      fixture.stop();
+      clearTimeout(demoTimer);
+      fixtureRef.current?.stop();
+      fixtureRef.current = null;
       cancelAnimationFrame(animRef.current);
       deck.finalize();
       map.remove();

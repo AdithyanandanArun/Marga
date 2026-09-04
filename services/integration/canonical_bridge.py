@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from typing import Any
 
 from packages.schemas.canonical import ActorType, SourceType, VehicleState
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in metres between two WGS84 points."""
+    r = 6_371_000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def actor_within_range(
+    actor_lat: float,
+    actor_lon: float,
+    source_lat: float,
+    source_lon: float,
+    range_m: float,
+) -> bool:
+    """Return True if the actor is within range_m of the reporting RSU/source."""
+    return _haversine_m(actor_lat, actor_lon, source_lat, source_lon) <= range_m
 
 _ACTOR_TYPES = {
     "car": ActorType.CAR,

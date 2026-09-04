@@ -10,16 +10,27 @@ from datetime import datetime
 from typing import Optional
 
 from .schemas import (
+    DynamicActorObservation,
+    InfrastructureState,
+    PedestrianState,
     Position,
     PositionEstimate,
+    RoadCondition,
+    RoadState,
+    SignalPhase,
     VehicleState,
     VehicleType,
-    PedestrianState,
-    SignalPhase,
-    InfrastructureState,
-    RoadState,
-    RoadCondition,
 )
+
+# SUMO type IDs that map to pedestrians and animals respectively.
+# These are checked first in normalize_actor() before vehicle mapping.
+PEDESTRIAN_TYPE_IDS: frozenset[str] = frozenset({
+    "pedestrian", "ped", "person", "walker",
+})
+ANIMAL_TYPE_IDS: frozenset[str] = frozenset({
+    "cow", "dog", "goat", "cattle", "animal",
+    "buffalo", "deer", "monkey",
+})
 
 # Maps SUMO vehicle type IDs to canonical VehicleType enum values.
 # SUMO type IDs are user-defined strings in the route/type files.
@@ -293,6 +304,64 @@ class SumoNormalizer:
             position=position,
             speed_mps=raw["speed"],
             heading_deg=heading,
+            source=source,
+            scenario_run_id=scenario_run_id,
+        )
+
+    def normalize_actor(
+        self,
+        actor_id: str,
+        raw: dict,
+        timestamp: datetime,
+        scenario_run_id: str,
+        source: str,
+    ) -> "VehicleState | PedestrianState | DynamicActorObservation":
+        """Dispatch to the correct normalizer based on SUMO type_id.
+
+        Call this instead of normalize_vehicle_state so that pedestrians and
+        animals are returned as their correct canonical types rather than being
+        mis-cast as vehicles.
+        """
+        type_id = raw.get("type_id", "").lower()
+        if type_id in PEDESTRIAN_TYPE_IDS:
+            return self.normalize_pedestrian_state(actor_id, raw, timestamp, scenario_run_id, source)
+        if type_id in ANIMAL_TYPE_IDS:
+            return self.normalize_dynamic_actor(actor_id, raw, timestamp, scenario_run_id, source)
+        return self.normalize_vehicle_state(actor_id, raw, timestamp, scenario_run_id, source)
+
+    def normalize_dynamic_actor(
+        self,
+        actor_id: str,
+        raw: dict,
+        timestamp: datetime,
+        scenario_run_id: str,
+        source: str,
+    ) -> DynamicActorObservation:
+        """Normalize a raw SUMO animal/unknown actor into DynamicActorObservation.
+
+        Expected raw dict keys:
+            x (float): SUMO Cartesian X (m)
+            y (float): SUMO Cartesian Y (m)
+            speed (float): speed in m/s
+            angle (float): SUMO angle (CCW from East, degrees)
+            type_id (str): SUMO type ID (e.g. "cow", "dog")
+        """
+        x: float = raw["x"]
+        y: float = raw["y"]
+        lat, lon = self.sumo_to_wgs84(x, y)
+
+        return DynamicActorObservation(
+            actor_id=actor_id,
+            timestamp_utc=timestamp,
+            actor_type=raw.get("type_id", "animal"),
+            position=PositionEstimate(
+                lat=lat,
+                lon=lon,
+                uncertainty_m=5.0,
+                confidence=0.7,
+                source=source,
+            ),
+            confidence=0.7,
             source=source,
             scenario_run_id=scenario_run_id,
         )
