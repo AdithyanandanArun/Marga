@@ -8,14 +8,15 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
-import types
 
 _BASE = os.path.dirname(__file__)
 _HYPHENATED = os.path.join(_BASE, "services", "safety-detectors")
 _DETECTORS = os.path.join(_HYPHENATED, "detectors")
+_IMPORTABLE_SAFETY_PACKAGE = os.path.join(_BASE, "services", "safety_detectors")
 
 # Add repo root to path so `services.simulation_adapter` is importable
 sys.path.insert(0, _BASE)
+
 
 def _register(module_name: str, init_path: str, search_locations: list[str]) -> None:
     """Load a module from *init_path* and register it in sys.modules."""
@@ -56,24 +57,25 @@ if os.path.isfile(_services_init):
         [os.path.join(_BASE, "services")],
     )
 
-_register(
-    "services.safety_detectors",
-    os.path.join(_HYPHENATED, "__init__.py"),
-    [_HYPHENATED],
-)
-_register(
-    "services.safety_detectors.detectors",
-    os.path.join(_DETECTORS, "__init__.py"),
-    [_DETECTORS],
-)
-
-# -- Register every detector submodule automatically -------------------------
-if os.path.isdir(_DETECTORS):
-    for fname in sorted(os.listdir(_DETECTORS)):
-        if fname.endswith(".py") and fname != "__init__.py":
-            mod_name = fname[:-3]
-            _register_submodule(
-                "services.safety_detectors.detectors",
-                mod_name,
-                os.path.join(_DETECTORS, fname),
-            )
+# The production package now exposes the legacy detector directory through its
+# package path. Retain the old test-only alias only for older checkouts.
+if not os.path.isdir(_IMPORTABLE_SAFETY_PACKAGE):
+    _register(
+        "services.safety_detectors",
+        os.path.join(_HYPHENATED, "__init__.py"),
+        [_HYPHENATED],
+    )
+    _register(
+        "services.safety_detectors.detectors",
+        os.path.join(_DETECTORS, "__init__.py"),
+        [_DETECTORS],
+    )
+    if os.path.isdir(_DETECTORS):
+        for fname in sorted(os.listdir(_DETECTORS)):
+            if fname.endswith(".py") and fname != "__init__.py":
+                mod_name = fname[:-3]
+                _register_submodule(
+                    "services.safety_detectors.detectors",
+                    mod_name,
+                    os.path.join(_DETECTORS, fname),
+                )
