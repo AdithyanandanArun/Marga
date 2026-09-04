@@ -48,22 +48,22 @@ def vehicle_from_adapter_event(event: Any) -> VehicleState:
     actor_type = _ACTOR_TYPES.get(vehicle_type, ActorType.OTHER)
     return VehicleState.model_validate(
         {
-        actor_id=actor_id,
-        actor_type=actor_type,
-        ts=payload.get("timestamp_utc", payload.get("ts", envelope.get("timestamp_utc"))),
-        position={
-            "lat": position["lat"],
-            "lon": position["lon"],
-            "altitude_m": position.get("alt_m", position.get("altitude_m")),
-        },
-        position_uncertainty_m=position.get("uncertainty_m", payload.get("position_uncertainty_m", 0.0)),
-        speed_mps=payload["speed_mps"],
-        acceleration_mps2=payload.get("acceleration_mps2"),
-        heading_deg=float(payload["heading_deg"]) % 360,
-        road_segment_id=payload.get("road_segment_id"),
-        lane_id=payload.get("lane_id"),
-        source=SourceType.SIMULATION,
-        capabilities=list(payload.get("capabilities", [])),
+            "actor_id": actor_id,
+            "actor_type": actor_type,
+            "ts": payload.get("timestamp_utc", payload.get("ts", envelope.get("timestamp_utc"))),
+            "position": {
+                "lat": position["lat"],
+                "lon": position["lon"],
+                "altitude_m": position.get("alt_m", position.get("altitude_m")),
+            },
+            "position_uncertainty_m": position.get("uncertainty_m", payload.get("position_uncertainty_m", 0.0)),
+            "speed_mps": payload["speed_mps"],
+            "acceleration_mps2": payload.get("acceleration_mps2"),
+            "heading_deg": float(payload["heading_deg"]) % 360,
+            "road_segment_id": payload.get("road_segment_id"),
+            "lane_id": payload.get("lane_id"),
+            "source": SourceType.SIMULATION,
+            "capabilities": list(payload.get("capabilities", [])),
         }
     )
 
