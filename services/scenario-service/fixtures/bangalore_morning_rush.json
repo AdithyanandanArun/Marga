@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "scenario_id": "bd4e7a12-3c91-4f6e-a801-2e5d8f0c9b34",
+  "name": "Bangalore Morning Rush",
+  "description": "High-density morning commute scenario on Bangalore Central roads. Models the chaotic 8am rush hour with a mix of autos, motorcycles, and buses, followed by a GPS degradation event near a flyover and a road narrowing due to construction work.",
+  "osm_region": "bangalore_central",
+  "seed": 12345,
+  "duration_s": 300.0,
+  "traffic_composition": {
+    "car_fraction": 0.25,
+    "truck_fraction": 0.05,
+    "bus_fraction": 0.10,
+    "motorcycle_fraction": 0.32,
+    "auto_rickshaw_fraction": 0.22,
+    "bicycle_fraction": 0.06,
+    "pedestrian_density": 0.75
+  },
+  "environment": {
+    "time_of_day_s": 28800.0,
+    "visibility_m": 8000.0,
+    "precipitation": "none",
+    "road_wetness": 0.1,
+    "wind_speed_mps": 1.5
+  },
+  "failure_schedule": [
+    {
+      "entry_id": "a1b2c3d4-0001-4abc-8def-000000000001",
+      "failure_type": "gps_degradation",
+      "start_sim_time_s": 60.0,
+      "duration_s": 45.0,
+      "parameters": {
+        "uncertainty_m": 35.0,
+        "affected_actors": ["all"],
+        "reason": "Flyover structure causing multipath GPS interference"
+      }
+    },
+    {
+      "entry_id": "a1b2c3d4-0002-4abc-8def-000000000002",
+      "failure_type": "road_narrowing",
+      "start_sim_time_s": 120.0,
+      "duration_s": 120.0,
+      "parameters": {
+        "edge_id": "mg_road_west_segment_3",
+        "lanes_remaining": 1,
+        "reason": "BBMP utility road work blocking two lanes"
+      }
+    },
+    {
+      "entry_id": "a1b2c3d4-0003-4abc-8def-000000000003",
+      "failure_type": "traffic_density_spike",
+      "start_sim_time_s": 150.0,
+      "duration_s": 60.0,
+      "parameters": {
+        "edge_ids": ["silk_board_junction_n", "silk_board_junction_s"],
+        "density_factor": 2.5,
+        "reason": "Signal failure at Silk Board junction causing backup"
+      }
+    }
+  ],
+  "sumo_net_file": null,
+  "sumo_route_file": null,
+  "tags": ["bangalore", "morning-rush", "urban", "india", "gps-degradation", "road-work"],
+  "created_at": "2026-09-04T00:00:00+00:00"
+}

@@ -1,45 +1,92 @@
-"""Canonical domain schemas for Marga V2X platform."""
+"""Marga canonical schemas — public re-exports."""
 
 from packages.schemas.canonical import (
     ActorType,
-    Alert,
     AlertLevel,
     AlertStatus,
-    DynamicActorObservation,
     Hazard,
     HazardState,
     HazardType,
-    InfrastructureState,
-    PedestrianState,
-    Position,
     RiskEvent,
     RiskType,
-    RoadState,
     SignalPriorityRequest,
     SourceType,
     TrafficSignalState,
-    VehicleState,
 )
 from packages.schemas.events import EventEnvelope
 
+from .actors import (
+    DynamicActorObservation,
+    PedestrianState,
+    VehicleState,
+    VehicleType,
+)
+from .alerts import Alert, AlertSeverity
+from .common import Position, PositionEstimate, SourceMetadata
+from .events import (
+    ACTOR_STATE_UPDATED,
+    ALERT_ISSUED,
+    HAZARD_OBSERVED,
+    HAZARD_UPDATED,
+    INFRASTRUCTURE_SIGNAL_UPDATED,
+    POSITION_ESTIMATE_UPDATED,
+    RISK_DETECTED,
+    ROAD_STATE_UPDATED,
+    SCENARIO_STARTED,
+    SCENARIO_STOPPED,
+    TRUST_ASSESSMENT_UPDATED,
+    CanonicalEvent,
+)
+from .hazards import HazardObservation
+from .infrastructure import InfrastructureState, InfrastructureType, SignalPhase
+from .road import RoadCondition, RoadEvent, RoadState
+
 __all__ = [
     "ActorType",
-    "Alert",
     "AlertLevel",
     "AlertStatus",
-    "DynamicActorObservation",
     "EventEnvelope",
     "Hazard",
     "HazardState",
     "HazardType",
-    "InfrastructureState",
-    "PedestrianState",
-    "Position",
     "RiskEvent",
     "RiskType",
-    "RoadState",
     "SignalPriorityRequest",
     "SourceType",
     "TrafficSignalState",
+    # common
+    "Position",
+    "PositionEstimate",
+    "SourceMetadata",
+    # actors
+    "VehicleType",
     "VehicleState",
+    "PedestrianState",
+    "DynamicActorObservation",
+    # infrastructure
+    "SignalPhase",
+    "InfrastructureType",
+    "InfrastructureState",
+    # road
+    "RoadCondition",
+    "RoadState",
+    "RoadEvent",
+    # hazards
+    "HazardObservation",
+    # alerts
+    "AlertSeverity",
+    "Alert",
+    # events
+    "ACTOR_STATE_UPDATED",
+    "INFRASTRUCTURE_SIGNAL_UPDATED",
+    "HAZARD_OBSERVED",
+    "HAZARD_UPDATED",
+    "POSITION_ESTIMATE_UPDATED",
+    "TRUST_ASSESSMENT_UPDATED",
+    "RISK_DETECTED",
+    "ALERT_ISSUED",
+    "ROAD_STATE_UPDATED",
+    "SCENARIO_STARTED",
+    "SCENARIO_STOPPED",
+    "CanonicalEvent",
 ]

@@ -1,6 +1,6 @@
 """Root conftest: register the hyphenated services/safety-detectors directory
 as the importable ``services.safety_detectors`` package so that all test
-modules can use normal dotted imports.
+modules can use normal dotted imports, and add repo root to sys.path.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ _BASE = os.path.dirname(__file__)
 _HYPHENATED = os.path.join(_BASE, "services", "safety-detectors")
 _DETECTORS = os.path.join(_HYPHENATED, "detectors")
 
+# Add repo root to path so `services.simulation_adapter` is importable
+sys.path.insert(0, _BASE)
 
 def _register(module_name: str, init_path: str, search_locations: list[str]) -> None:
     """Load a module from *init_path* and register it in sys.modules."""
