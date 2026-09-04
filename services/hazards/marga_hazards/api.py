@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
-
 from marga_schemas.common import GeoPoint
-from marga_schemas.hazard import Hazard, HazardObservation, HazardState, HazardType
+from marga_schemas.hazard import Hazard, HazardObservation, HazardType
+from pydantic import BaseModel
 
 from .fusion import HazardFusionEngine
 
@@ -70,7 +69,7 @@ async def list_hazards(
     """List active hazards with optional bounding-box filter."""
     bbox: tuple[float, float, float, float] | None = None
     if all(v is not None for v in (min_lat, min_lon, max_lat, max_lon)):
-        bbox = (min_lat, min_lon, max_lat, max_lon)  # type: ignore[arg-type]
+        bbox = cast(tuple[float, float, float, float], (min_lat, min_lon, max_lat, max_lon))
     hazards = _engine.list_active_hazards(bbox=bbox)
     return HazardListResponse(hazards=hazards, total=len(hazards))
 
@@ -115,7 +114,7 @@ async def submit_negative_evidence(
 
 def create_app(*, engine: HazardFusionEngine | None = None) -> FastAPI:
     """Create a FastAPI application wired to the given (or default) fusion engine."""
-    global _engine  # noqa: PLW0603
+    global _engine
     if engine is not None:
         _engine = engine
 
@@ -135,5 +134,5 @@ def get_engine() -> HazardFusionEngine:
 
 def set_engine(engine: HazardFusionEngine) -> None:
     """Replace the module-level fusion engine (useful for tests)."""
-    global _engine  # noqa: PLW0603
+    global _engine
     _engine = engine

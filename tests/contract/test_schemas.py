@@ -13,23 +13,18 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
-
 from marga_schemas.alert import Alert, AlertPriority, AlertState
 from marga_schemas.common import (
     ActorType,
-    ConnectivityState,
     GeoPoint,
-    PositionMethod,
-    SchemaVersioned,
     Source,
 )
 from marga_schemas.envelope import EventEnvelope
 from marga_schemas.hazard import Hazard, HazardObservation, HazardState, HazardType
 from marga_schemas.messaging import MessagePriority, V2XMessage
-from marga_schemas.trust import SignedMessage, TrustAssessment, TrustLevel
+from marga_schemas.trust import SignedMessage
 from marga_schemas.vehicle import VehicleState
-
+from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures

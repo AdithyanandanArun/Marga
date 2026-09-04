@@ -50,15 +50,11 @@ class MessagePriorityQueue:
         self._lock = threading.Lock()
 
         # Per-priority heaps: entries are (priority_order, sequence, message)
-        self._lanes: dict[MessagePriority, list[tuple[int, int, V2XMessage]]] = {
-            p: [] for p in MessagePriority
-        }
+        self._lanes: dict[MessagePriority, list[tuple[int, int, V2XMessage]]] = {p: [] for p in MessagePriority}
 
         # For latest-state compaction: track newest message per sender_id per lane.
         # Maps sender_id -> sequence number of the entry currently considered "latest".
-        self._latest_by_sender: dict[MessagePriority, dict[str, int]] = {
-            p: {} for p in MessagePriority
-        }
+        self._latest_by_sender: dict[MessagePriority, dict[str, int]] = {p: {} for p in MessagePriority}
         # Tombstones for compacted-out entries (superseded by a newer message from same sender).
         self._tombstones: set[int] = set()
 
@@ -188,9 +184,7 @@ class MessagePriorityQueue:
             depths: dict[str, int] = {}
             for priority in MessagePriority:
                 # Count non-tombstoned entries.
-                count = sum(
-                    1 for _, seq, _ in self._lanes[priority] if seq not in self._tombstones
-                )
+                count = sum(1 for _, seq, _ in self._lanes[priority] if seq not in self._tombstones)
                 depths[priority.value] = count
 
             depths["total"] = sum(v for k, v in depths.items() if k != "total")

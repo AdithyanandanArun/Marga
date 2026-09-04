@@ -1,4 +1,4 @@
-.PHONY: help install lint typecheck test test-unit test-contract test-integration test-e2e
+.PHONY: help install lint format typecheck test test-unit test-contract test-integration test-e2e check
 .PHONY: run-backend run-web import-map bootstrap docker-build docker-up docker-down clean
 
 help:
@@ -32,6 +32,11 @@ PYTHON ?= python3
 VENV := .venv
 PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
+PYTEST := $(VENV)/bin/pytest
+RUFF := $(VENV)/bin/ruff
+MYPY := $(VENV)/bin/mypy
+UVICORN := $(VENV)/bin/uvicorn
+ALEMBIC := $(VENV)/bin/alembic
 
 $(VENV)/bin/activate:
 	$(PYTHON) -m venv $(VENV)
@@ -39,36 +44,43 @@ $(VENV)/bin/activate:
 
 install: $(VENV)/bin/activate
 	$(PIP) install -e ".[dev]"
+	$(PIP) install -e ./packages/schemas
+	$(PIP) install -e "./packages/persistence[dev]"
+	$(PIP) install -e "./packages/observability[fastapi]"
 
 bootstrap: install
 	@echo "Running database migrations..."
-	$(VENV)/bin/alembic upgrade head || echo "DB not available, skipping migrations"
+	$(ALEMBIC) -c packages/persistence/alembic.ini upgrade head || echo "DB not available, skipping migrations"
 	@echo "Bootstrap complete."
 
 lint:
-	$(VENV)/bin/ruff check packages services tests
-	$(VENV)/bin/ruff format --check packages services tests
+	$(RUFF) check .
+
+format:
+	$(RUFF) format --check .
 
 typecheck:
-	$(VENV)/bin/mypy packages/ services/
+	$(MYPY) packages/ services/
 
 test:
-	$(VENV)/bin/pytest packages/geo/tests packages/schemas/tests services/gateway/tests services/world_state/tests tests/ -v --tb=short
+	$(PYTEST) tests/ -q --tb=short
 
 test-unit:
-	$(VENV)/bin/pytest tests/ -v --tb=short -m "not integration and not e2e and not contract"
+	$(PYTEST) tests/unit -q --tb=short
 
 test-contract:
-	$(VENV)/bin/pytest tests/contract/ -v --tb=short
+	$(PYTEST) tests/contract -q --tb=short
 
 test-integration:
-	$(VENV)/bin/pytest tests/integration/ -v --tb=short
+	$(PYTEST) tests/integration -q --tb=short
+
+check: lint format typecheck test
 
 test-e2e:
 	$(VENV)/bin/pytest tests/e2e/ -v --tb=short
 
 run-backend:
-	$(VENV)/bin/uvicorn services.gateway.app.main:app --host 0.0.0.0 --port 8000 --reload
+	$(UVICORN) services.gateway.app:app --host 0.0.0.0 --port 8000 --reload
 
 run-web:
 	@echo "Frontend not yet configured"

@@ -1,10 +1,10 @@
 """Marga V2X Messaging Service — transport, priority, store-forward, connectivity."""
 
-from marga_messaging.connectivity import ConnectivityMonitor
-from marga_messaging.network_model import LinkConfig, NetworkModel, NetworkModelDecorator
-from marga_messaging.priority import MessagePriorityQueue
-from marga_messaging.store_forward import StoreForwardManager
-from marga_messaging.transport import InProcessTransport, V2XTransport, WebSocketTransport
+from .connectivity import ConnectivityMonitor
+from .network_model import LinkConfig, NetworkModel, NetworkModelDecorator
+from .priority import MessagePriorityQueue
+from .store_forward import StoreForwardManager
+from .transport import InProcessTransport, V2XTransport, WebSocketTransport
 
 __all__ = [
     "ConnectivityMonitor",

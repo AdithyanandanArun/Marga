@@ -69,8 +69,8 @@ class StoreForwardManager:
         existing_entry_id = self._seen.get(dedup_key)
         if existing_entry_id is not None and existing_entry_id in self._entries:
             existing = self._entries[existing_entry_id]
-            incoming_ts = message.timestamp if message.timestamp.tzinfo else message.timestamp.replace(
-                tzinfo=timezone.utc
+            incoming_ts = (
+                message.timestamp if message.timestamp.tzinfo else message.timestamp.replace(tzinfo=timezone.utc)
             )
             existing_ts = existing.message.timestamp
             if existing_ts.tzinfo is None:
@@ -111,9 +111,11 @@ class StoreForwardManager:
         sorted_entries = sorted(
             self._entries.values(),
             key=lambda e: (
-                0 if e.queue_class == QueueClass.CRITICAL_LOCAL else
-                1 if e.queue_class == QueueClass.REGIONAL_SAFETY else
-                2
+                0
+                if e.queue_class == QueueClass.CRITICAL_LOCAL
+                else 1
+                if e.queue_class == QueueClass.REGIONAL_SAFETY
+                else 2
             ),
         )
 

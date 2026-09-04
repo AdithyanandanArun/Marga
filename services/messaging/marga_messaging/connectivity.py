@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _WINDOW_SIZE = 20
 
 # Thresholds for state transitions based on success rate within the window.
-_THRESHOLD_FULL = 0.9          # >= 90% success across all routes -> FULL
+_THRESHOLD_FULL = 0.9  # >= 90% success across all routes -> FULL
 _THRESHOLD_INTERMITTENT = 0.3  # >= 30% success on any route -> INTERMITTENT
 # Below 30% on all routes -> ISOLATED
 # Cloud down but direct succeeding -> DIRECT_ONLY
@@ -119,9 +119,7 @@ class ConnectivityMonitor:
         # Everything failing -> ISOLATED
         return ConnectivityState.ISOLATED
 
-    async def _emit_transition(
-        self, old_state: ConnectivityState, new_state: ConnectivityState
-    ) -> None:
+    async def _emit_transition(self, old_state: ConnectivityState, new_state: ConnectivityState) -> None:
         """Notify registered listeners about a state transition."""
         for listener in self._listeners:
             try:

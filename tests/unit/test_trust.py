@@ -2,34 +2,21 @@
 
 from __future__ import annotations
 
-import sys
-import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-import pytest
-
-# ---------------------------------------------------------------------------
-# Path setup: ensure marga_schemas and marga_trust are importable.
-# ---------------------------------------------------------------------------
-_repo = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_repo / "packages" / "schemas"))
-sys.path.insert(0, str(_repo / "services" / "trust"))
-
-from marga_schemas.trust import SignedMessage, TrustAssessment, TrustEvent, TrustLevel
 from marga_schemas.common import ActorType
-
-from marga_trust.replay import ReplayCache
-from marga_trust.rate_limiter import RateLimiter
+from marga_schemas.trust import SignedMessage, TrustLevel
 from marga_trust.credential import CredentialRecord, CredentialVerifier
 from marga_trust.plausibility import PlausibilityChecker
 from marga_trust.privacy import PseudonymManager
+from marga_trust.rate_limiter import RateLimiter
+from marga_trust.replay import ReplayCache
 from marga_trust.validator import TrustValidator
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -62,8 +49,8 @@ def _make_message(
 # Replay cache tests
 # ===================================================================
 
-class TestReplayCache:
 
+class TestReplayCache:
     def test_first_message_accepted(self):
         cache = ReplayCache()
         now = _now()
@@ -108,8 +95,8 @@ class TestReplayCache:
 # Rate limiter tests
 # ===================================================================
 
-class TestRateLimiter:
 
+class TestRateLimiter:
     def test_allows_under_limit(self):
         rl = RateLimiter()
         assert rl.check("sender-a", TrustLevel.MEDIUM) is True
@@ -150,24 +137,30 @@ class TestRateLimiter:
 # Credential verifier tests
 # ===================================================================
 
-class TestCredentialVerifier:
 
+class TestCredentialVerifier:
     def _verifier(self) -> CredentialVerifier:
         v = CredentialVerifier()
-        v.register(CredentialRecord(
-            sender_id="ambulance-1",
-            trust_level=TrustLevel.AUTHORITY,
-            emergency_roles=frozenset(["EMERGENCY_VEHICLE"]),
-        ))
-        v.register(CredentialRecord(
-            sender_id="rsu-42",
-            trust_level=TrustLevel.HIGH,
-        ))
-        v.register(CredentialRecord(
-            sender_id="expired-node",
-            trust_level=TrustLevel.HIGH,
-            expires_at=_now() - timedelta(hours=1),
-        ))
+        v.register(
+            CredentialRecord(
+                sender_id="ambulance-1",
+                trust_level=TrustLevel.AUTHORITY,
+                emergency_roles=frozenset(["EMERGENCY_VEHICLE"]),
+            )
+        )
+        v.register(
+            CredentialRecord(
+                sender_id="rsu-42",
+                trust_level=TrustLevel.HIGH,
+            )
+        )
+        v.register(
+            CredentialRecord(
+                sender_id="expired-node",
+                trust_level=TrustLevel.HIGH,
+                expires_at=_now() - timedelta(hours=1),
+            )
+        )
         return v
 
     def test_known_identity(self):
@@ -197,13 +190,15 @@ class TestCredentialVerifier:
 
     def test_load_from_dict(self):
         v = CredentialVerifier()
-        v.load_from_dict([
-            {
-                "sender_id": "node-x",
-                "trust_level": "HIGH",
-                "emergency_roles": ["FIRE_TRUCK"],
-            }
-        ])
+        v.load_from_dict(
+            [
+                {
+                    "sender_id": "node-x",
+                    "trust_level": "HIGH",
+                    "emergency_roles": ["FIRE_TRUCK"],
+                }
+            ]
+        )
         assert v.verify_identity("node-x") == TrustLevel.HIGH
         assert v.verify_emergency("node-x", "FIRE_TRUCK") is True
 
@@ -212,13 +207,16 @@ class TestCredentialVerifier:
 # Plausibility checker tests
 # ===================================================================
 
-class TestPlausibilityChecker:
 
+class TestPlausibilityChecker:
     def test_normal_update_plausible(self):
         pc = PlausibilityChecker()
         score, anomalies = pc.check(
-            actor_id="car-1", lat=12.97, lon=77.59,
-            speed_mps=15.0, timestamp=_now(),
+            actor_id="car-1",
+            lat=12.97,
+            lon=77.59,
+            speed_mps=15.0,
+            timestamp=_now(),
         )
         assert score == 1.0
         assert anomalies == []
@@ -229,7 +227,10 @@ class TestPlausibilityChecker:
         pc.check("car-2", lat=12.97, lon=77.59, speed_mps=10.0, timestamp=t0)
         # Jump ~1100 km north in 1 second.
         score, anomalies = pc.check(
-            "car-2", lat=22.97, lon=77.59, speed_mps=10.0,
+            "car-2",
+            lat=22.97,
+            lon=77.59,
+            speed_mps=10.0,
             timestamp=t0 + timedelta(seconds=1),
         )
         assert score == 0.0
@@ -238,8 +239,12 @@ class TestPlausibilityChecker:
     def test_impossible_speed_flagged(self):
         pc = PlausibilityChecker()
         score, anomalies = pc.check(
-            "car-3", lat=12.97, lon=77.59, speed_mps=200.0,
-            timestamp=_now(), actor_type=ActorType.CAR,
+            "car-3",
+            lat=12.97,
+            lon=77.59,
+            speed_mps=200.0,
+            timestamp=_now(),
+            actor_type=ActorType.CAR,
         )
         assert score < 1.0
         assert "IMPOSSIBLE_SPEED" in anomalies
@@ -249,7 +254,10 @@ class TestPlausibilityChecker:
         t0 = _now()
         pc.check("car-4", lat=12.97, lon=77.59, speed_mps=10.0, timestamp=t0)
         score, anomalies = pc.check(
-            "car-4", lat=12.97, lon=77.59, speed_mps=10.0,
+            "car-4",
+            lat=12.97,
+            lon=77.59,
+            speed_mps=10.0,
             timestamp=t0 - timedelta(seconds=5),
         )
         assert score == 0.0
@@ -259,8 +267,12 @@ class TestPlausibilityChecker:
         pc = PlausibilityChecker()
         # 15 m/s is fine for a car but impossible for a pedestrian.
         score, anomalies = pc.check(
-            "ped-1", lat=12.97, lon=77.59, speed_mps=15.0,
-            timestamp=_now(), actor_type=ActorType.PEDESTRIAN,
+            "ped-1",
+            lat=12.97,
+            lon=77.59,
+            speed_mps=15.0,
+            timestamp=_now(),
+            actor_type=ActorType.PEDESTRIAN,
         )
         assert score < 1.0
         assert "IMPOSSIBLE_SPEED" in anomalies
@@ -270,8 +282,8 @@ class TestPlausibilityChecker:
 # Pseudonym manager tests
 # ===================================================================
 
-class TestPseudonymManager:
 
+class TestPseudonymManager:
     def test_get_pseudonym_stable(self):
         pm = PseudonymManager(rotation_interval_s=300)
         p1 = pm.get_pseudonym("node-1")
@@ -304,19 +316,23 @@ class TestPseudonymManager:
 # Full validator pipeline tests
 # ===================================================================
 
-class TestTrustValidator:
 
+class TestTrustValidator:
     def _make_validator(self) -> TrustValidator:
         cred = CredentialVerifier()
-        cred.register(CredentialRecord(
-            sender_id="ambulance-1",
-            trust_level=TrustLevel.AUTHORITY,
-            emergency_roles=frozenset(["EMERGENCY_VEHICLE"]),
-        ))
-        cred.register(CredentialRecord(
-            sender_id="rsu-42",
-            trust_level=TrustLevel.HIGH,
-        ))
+        cred.register(
+            CredentialRecord(
+                sender_id="ambulance-1",
+                trust_level=TrustLevel.AUTHORITY,
+                emergency_roles=frozenset(["EMERGENCY_VEHICLE"]),
+            )
+        )
+        cred.register(
+            CredentialRecord(
+                sender_id="rsu-42",
+                trust_level=TrustLevel.HIGH,
+            )
+        )
         return TrustValidator(credential_verifier=cred)
 
     def test_valid_message_accepted(self):
@@ -387,19 +403,28 @@ class TestTrustValidator:
         t0 = _now()
         # First message at location A.
         msg1 = _make_message(
-            sender="rsu-42", nonce="n-a",
+            sender="rsu-42",
+            nonce="n-a",
             payload={
-                "actor_id": "car-plaus", "lat": 12.97, "lon": 77.59,
-                "speed_mps": 10.0, "ts": t0.isoformat(),
+                "actor_id": "car-plaus",
+                "lat": 12.97,
+                "lon": 77.59,
+                "speed_mps": 10.0,
+                "ts": t0.isoformat(),
             },
         )
         v.validate(msg1)
         # Second message at location B — huge jump.
         msg2 = _make_message(
-            sender="rsu-42", nonce="n-b", payload_hash="h2",
+            sender="rsu-42",
+            nonce="n-b",
+            payload_hash="h2",
             payload={
-                "actor_id": "car-plaus", "lat": 28.61, "lon": 77.20,
-                "speed_mps": 10.0, "ts": (t0 + timedelta(seconds=1)).isoformat(),
+                "actor_id": "car-plaus",
+                "lat": 28.61,
+                "lon": 77.20,
+                "speed_mps": 10.0,
+                "ts": (t0 + timedelta(seconds=1)).isoformat(),
             },
         )
         result = v.validate(msg2)
@@ -412,7 +437,7 @@ class TestTrustValidator:
         )
         v = TrustValidator(rate_limiter=rl)
         msg1 = _make_message(sender="spammer", nonce="s1")
-        r1 = v.validate(msg1)
+        v.validate(msg1)
         msg2 = _make_message(sender="spammer", nonce="s2", payload_hash="h2")
         r2 = v.validate(msg2)
         assert r2.trust_level == TrustLevel.UNTRUSTED
@@ -422,18 +447,27 @@ class TestTrustValidator:
         v = self._make_validator()
         t0 = _now()
         msg1 = _make_message(
-            sender="rsu-42", nonce="bt-1",
+            sender="rsu-42",
+            nonce="bt-1",
             payload={
-                "actor_id": "car-bt", "lat": 12.97, "lon": 77.59,
-                "speed_mps": 5.0, "ts": t0.isoformat(),
+                "actor_id": "car-bt",
+                "lat": 12.97,
+                "lon": 77.59,
+                "speed_mps": 5.0,
+                "ts": t0.isoformat(),
             },
         )
         v.validate(msg1)
         msg2 = _make_message(
-            sender="rsu-42", nonce="bt-2", payload_hash="bth2",
+            sender="rsu-42",
+            nonce="bt-2",
+            payload_hash="bth2",
             payload={
-                "actor_id": "car-bt", "lat": 12.97, "lon": 77.59,
-                "speed_mps": 5.0, "ts": (t0 - timedelta(seconds=10)).isoformat(),
+                "actor_id": "car-bt",
+                "lat": 12.97,
+                "lon": 77.59,
+                "speed_mps": 5.0,
+                "ts": (t0 - timedelta(seconds=10)).isoformat(),
             },
         )
         result = v.validate(msg2)

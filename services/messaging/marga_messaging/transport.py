@@ -7,15 +7,13 @@ import json
 import logging
 import re
 import uuid
-from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 import websockets
-from websockets.asyncio.client import ClientConnection
-
-from marga_schemas.messaging import LinkState, V2XMessage
 from marga_schemas.common import ConnectivityState
+from marga_schemas.messaging import LinkState, V2XMessage
+from websockets.asyncio.client import ClientConnection
 
 logger = logging.getLogger(__name__)
 
@@ -256,9 +254,7 @@ class WebSocketTransport:
     def get_link_state(self) -> LinkState:
         return LinkState(
             node_id=self._node_id,
-            connectivity=(
-                ConnectivityState.FULL if self._cloud_reachable else ConnectivityState.ISOLATED
-            ),
+            connectivity=(ConnectivityState.FULL if self._cloud_reachable else ConnectivityState.ISOLATED),
             direct_peers=0,
             cloud_reachable=self._cloud_reachable,
             last_cloud_contact=self._last_cloud_contact,

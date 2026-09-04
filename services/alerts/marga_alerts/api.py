@@ -15,9 +15,8 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
-
 from marga_schemas.alert import Alert, AlertPriority, AlertState
+from pydantic import BaseModel, Field
 
 from .lifecycle import AlertLifecycleManager
 from .prioritizer import AlertPrioritizer
@@ -43,7 +42,7 @@ router = APIRouter(prefix="/v1", tags=["alerts"])
 class _WsClient:
     """Thin wrapper around a WebSocket with optional bbox filter."""
 
-    __slots__ = ("ws", "bbox")
+    __slots__ = ("bbox", "ws")
 
     def __init__(self, ws: WebSocket, bbox: tuple[float, float, float, float] | None = None):
         self.ws = ws
@@ -204,10 +203,10 @@ async def patch_alert(alert_id: UUID, req: AlertPatchRequest) -> dict[str, Any]:
             alert = lifecycle.update_alert(alert_id, {"state": req.state})
         else:
             raise HTTPException(400, "No state change provided")
-    except KeyError:
-        raise HTTPException(404, "Alert not found")
+    except KeyError as exc:
+        raise HTTPException(404, "Alert not found") from exc
     except ValueError as exc:
-        raise HTTPException(422, str(exc))
+        raise HTTPException(422, str(exc)) from exc
 
     store.update(alert)
 

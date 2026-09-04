@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-import time
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from marga_schemas.alert import Alert, AlertPriority, AlertState
 from marga_schemas.common import GeoPoint
 
@@ -19,10 +16,10 @@ from services.alerts.marga_alerts.lifecycle import AlertLifecycleManager
 from services.alerts.marga_alerts.prioritizer import AlertPrioritizer
 from services.alerts.marga_alerts.store import AlertStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_alert(
     *,
@@ -97,7 +94,7 @@ class TestAlertPrioritizer:
         scores = [p.compute_score(a) for a in alerts]
         # Each score should be strictly increasing.
         for i in range(1, len(scores)):
-            assert scores[i] > scores[i - 1], f"Score at index {i} not greater than {i-1}"
+            assert scores[i] > scores[i - 1], f"Score at index {i} not greater than {i - 1}"
 
     def test_custom_weights(self):
         """Weights can be overridden at construction time."""
@@ -190,9 +187,7 @@ class TestAlertLifecycleManager:
         mgr = AlertLifecycleManager()
         alert = _make_alert(ttl_s=0)
         # Manually set created_at in the past
-        alert = alert.model_copy(
-            update={"created_at": datetime.now(timezone.utc) - timedelta(seconds=5)}
-        )
+        alert = alert.model_copy(update={"created_at": datetime.now(timezone.utc) - timedelta(seconds=5)})
         created = mgr.create_alert(alert)
         expired = mgr.expire_stale()
         assert created.alert_id in expired
@@ -439,20 +434,26 @@ class TestAlertAPI:
         assert resp2.json()["alert_type"] == "collision_warning"
 
     def test_list_alerts_with_filters(self, client: TestClient):
-        client.post("/v1/alerts", json={
-            "alert_type": "pothole",
-            "priority": "LOW",
-            "title": "Pothole",
-            "description": "Road damage",
-            "confidence": 0.7,
-        })
-        client.post("/v1/alerts", json={
-            "alert_type": "collision_warning",
-            "priority": "CRITICAL",
-            "title": "Collision",
-            "description": "Risk",
-            "confidence": 0.9,
-        })
+        client.post(
+            "/v1/alerts",
+            json={
+                "alert_type": "pothole",
+                "priority": "LOW",
+                "title": "Pothole",
+                "description": "Road damage",
+                "confidence": 0.7,
+            },
+        )
+        client.post(
+            "/v1/alerts",
+            json={
+                "alert_type": "collision_warning",
+                "priority": "CRITICAL",
+                "title": "Collision",
+                "description": "Risk",
+                "confidence": 0.9,
+            },
+        )
 
         resp = client.get("/v1/alerts?alert_type=pothole")
         assert resp.status_code == 200
@@ -461,13 +462,16 @@ class TestAlertAPI:
         assert data[0]["alert_type"] == "pothole"
 
     def test_patch_alert_acknowledge(self, client: TestClient):
-        resp = client.post("/v1/alerts", json={
-            "alert_type": "collision_warning",
-            "priority": "HIGH",
-            "title": "Alert",
-            "description": "Desc",
-            "confidence": 0.8,
-        })
+        resp = client.post(
+            "/v1/alerts",
+            json={
+                "alert_type": "collision_warning",
+                "priority": "HIGH",
+                "title": "Alert",
+                "description": "Desc",
+                "confidence": 0.8,
+            },
+        )
         alert_id = resp.json()["alert_id"]
 
         resp2 = client.patch(f"/v1/alerts/{alert_id}", json={"state": "ACKNOWLEDGED"})
@@ -475,19 +479,25 @@ class TestAlertAPI:
         assert resp2.json()["state"] == "ACKNOWLEDGED"
 
     def test_patch_alert_resolve(self, client: TestClient):
-        resp = client.post("/v1/alerts", json={
-            "alert_type": "collision_warning",
-            "priority": "HIGH",
-            "title": "Alert",
-            "description": "Desc",
-            "confidence": 0.8,
-        })
+        resp = client.post(
+            "/v1/alerts",
+            json={
+                "alert_type": "collision_warning",
+                "priority": "HIGH",
+                "title": "Alert",
+                "description": "Desc",
+                "confidence": 0.8,
+            },
+        )
         alert_id = resp.json()["alert_id"]
 
-        resp2 = client.patch(f"/v1/alerts/{alert_id}", json={
-            "state": "RESOLVED",
-            "resolution_reason": "Threat passed",
-        })
+        resp2 = client.patch(
+            f"/v1/alerts/{alert_id}",
+            json={
+                "state": "RESOLVED",
+                "resolution_reason": "Threat passed",
+            },
+        )
         assert resp2.status_code == 200
         assert resp2.json()["state"] == "RESOLVED"
 
@@ -499,13 +509,16 @@ class TestAlertAPI:
         """WebSocket client receives alert.issued when a new alert is created."""
         with client.websocket_connect("/v1/stream/alerts") as ws:
             # Create an alert via REST — should trigger broadcast.
-            client.post("/v1/alerts", json={
-                "alert_type": "collision_warning",
-                "priority": "CRITICAL",
-                "title": "Collision",
-                "description": "Two vehicles",
-                "confidence": 0.9,
-            })
+            client.post(
+                "/v1/alerts",
+                json={
+                    "alert_type": "collision_warning",
+                    "priority": "CRITICAL",
+                    "title": "Collision",
+                    "description": "Two vehicles",
+                    "confidence": 0.9,
+                },
+            )
             # The broadcast happens in the same event loop iteration as
             # the POST handler, so the message should be available.
             data = ws.receive_json()

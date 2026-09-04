@@ -8,6 +8,6 @@ from .store import AlertStore
 __all__ = [
     "AlertLifecycleManager",
     "AlertPrioritizer",
-    "AudienceResolver",
     "AlertStore",
+    "AudienceResolver",
 ]

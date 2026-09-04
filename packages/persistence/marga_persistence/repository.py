@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from marga_persistence.models import (
@@ -29,9 +28,7 @@ class HazardRepository:
         return hazard
 
     async def get_hazard(self, hazard_id: UUID) -> HazardRow | None:
-        result = await self._session.execute(
-            select(HazardRow).where(HazardRow.hazard_id == hazard_id)
-        )
+        result = await self._session.execute(select(HazardRow).where(HazardRow.hazard_id == hazard_id))
         return result.scalar_one_or_none()
 
     async def list_hazards(
@@ -71,13 +68,9 @@ class HazardRepository:
         await self._session.flush()
         return obs
 
-    async def get_observations_for_hazard(
-        self, hazard_id: UUID
-    ) -> list[HazardObservationRow]:
+    async def get_observations_for_hazard(self, hazard_id: UUID) -> list[HazardObservationRow]:
         result = await self._session.execute(
-            select(HazardObservationRow).where(
-                HazardObservationRow.hazard_id == hazard_id
-            )
+            select(HazardObservationRow).where(HazardObservationRow.hazard_id == hazard_id)
         )
         return list(result.scalars().all())
 
@@ -94,9 +87,7 @@ class AlertRepository:
         return alert
 
     async def get_alert(self, alert_id: UUID) -> AlertRow | None:
-        result = await self._session.execute(
-            select(AlertRow).where(AlertRow.alert_id == alert_id)
-        )
+        result = await self._session.execute(select(AlertRow).where(AlertRow.alert_id == alert_id))
         return result.scalar_one_or_none()
 
     async def list_alerts(

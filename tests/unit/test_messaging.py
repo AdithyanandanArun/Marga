@@ -4,19 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
-
-import pytest
-
-from marga_schemas.common import ConnectivityState
-from marga_schemas.messaging import MessagePriority, QueueClass, V2XMessage
 
 from marga_messaging.connectivity import ConnectivityMonitor
 from marga_messaging.network_model import LinkConfig, NetworkModel, NetworkModelDecorator
 from marga_messaging.priority import MessagePriorityQueue
 from marga_messaging.store_forward import StoreForwardManager
 from marga_messaging.transport import InProcessTransport
-
+from marga_schemas.common import ConnectivityState
+from marga_schemas.messaging import MessagePriority, QueueClass, V2XMessage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -459,7 +454,6 @@ class TestNetworkModel:
         decorated = NetworkModelDecorator(transport, model)
 
         received: list[V2XMessage] = []
-        timestamps: list[float] = []
 
         async def handler(topic: str, msg: V2XMessage) -> None:
             received.append(msg)

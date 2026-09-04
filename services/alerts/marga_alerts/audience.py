@@ -8,7 +8,7 @@ a ground-level road is not broadcast to actors on a parallel flyover.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from marga_schemas.alert import Alert

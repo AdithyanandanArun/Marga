@@ -6,20 +6,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-
 from marga_schemas.common import ConnectivityState
 from marga_schemas.messaging import (
     LinkState,
-    MessagePriority,
-    QueueClass,
     V2XMessage,
 )
+from pydantic import BaseModel, Field
 
-from marga_messaging.connectivity import ConnectivityMonitor
-from marga_messaging.priority import MessagePriorityQueue
-from marga_messaging.store_forward import StoreForwardManager
-from marga_messaging.transport import InProcessTransport, V2XTransport
+from .connectivity import ConnectivityMonitor
+from .priority import MessagePriorityQueue
+from .store_forward import StoreForwardManager
+from .transport import V2XTransport
 
 router = APIRouter(prefix="/v1/messaging", tags=["messaging"])
 
@@ -163,10 +160,7 @@ async def flush_store_forward(request: FlushRequest) -> FlushResponse:
 
     return FlushResponse(
         forwarded_count=len(messages),
-        messages=[
-            {"message_id": str(m.message_id), "topic": m.topic, "priority": m.priority.value}
-            for m in messages
-        ],
+        messages=[{"message_id": str(m.message_id), "topic": m.topic, "priority": m.priority.value} for m in messages],
     )
 
 

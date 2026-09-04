@@ -17,7 +17,7 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir . && \
-    pip install --no-cache-dir ./packages/schemas
+    pip install --no-cache-dir ./packages/schemas ./packages/persistence ./packages/observability
 
 # Copy application source
 COPY services/ ./services/

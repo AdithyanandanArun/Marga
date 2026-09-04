@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-import math
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-
 from marga_schemas.common import GeoPoint
 from marga_schemas.hazard import Hazard, HazardObservation, HazardState, HazardType
 
 from services.hazards.marga_hazards.fusion import HazardFusionEngine
 from services.hazards.marga_hazards.lifecycle import (
     DEFAULT_TTL,
-    HazardLifecycleManager,
 )
 from services.hazards.marga_hazards.spatial import HazardSpatialIndex, haversine_m
-
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -201,14 +197,10 @@ class TestIndependentCorroboration:
         h1 = engine.ingest_observation(_make_obs(source_id="s1"))
         conf_1 = h1.confidence
 
-        h2 = engine.ingest_observation(
-            _make_obs(source_id="s2", observed_at=_NOW + timedelta(seconds=10))
-        )
+        h2 = engine.ingest_observation(_make_obs(source_id="s2", observed_at=_NOW + timedelta(seconds=10)))
         conf_2 = h2.confidence
 
-        h3 = engine.ingest_observation(
-            _make_obs(source_id="s3", observed_at=_NOW + timedelta(seconds=20))
-        )
+        h3 = engine.ingest_observation(_make_obs(source_id="s3", observed_at=_NOW + timedelta(seconds=20)))
         conf_3 = h3.confidence
 
         # All merged into the same hazard
@@ -287,9 +279,7 @@ class TestSpatialProximityMatching:
 class TestDifferentTypesDontMerge:
     def test_incompatible_types_stay_separate(self) -> None:
         engine = HazardFusionEngine()
-        h1 = engine.ingest_observation(
-            _make_obs(hazard_type=HazardType.POTHOLE, position=_POS_A)
-        )
+        h1 = engine.ingest_observation(_make_obs(hazard_type=HazardType.POTHOLE, position=_POS_A))
         h2 = engine.ingest_observation(
             _make_obs(
                 hazard_type=HazardType.FLOOD,
@@ -309,9 +299,7 @@ class TestDifferentTypesDontMerge:
         engine = HazardFusionEngine()
         # Use positions ~5 m apart so spatial_score ~ 0.9
         pos_very_near = GeoPoint(lat=12.97164, lon=77.5946)
-        h1 = engine.ingest_observation(
-            _make_obs(hazard_type=HazardType.POTHOLE, position=_POS_A)
-        )
+        h1 = engine.ingest_observation(_make_obs(hazard_type=HazardType.POTHOLE, position=_POS_A))
         h2 = engine.ingest_observation(
             _make_obs(
                 hazard_type=HazardType.BUMP,
@@ -328,9 +316,7 @@ class TestDifferentTypesDontMerge:
 class TestRoadSegmentIsolation:
     def test_same_segment_merges(self) -> None:
         engine = HazardFusionEngine()
-        h1 = engine.ingest_observation(
-            _make_obs(road_segment_id="seg-101", position=_POS_A)
-        )
+        h1 = engine.ingest_observation(_make_obs(road_segment_id="seg-101", position=_POS_A))
         h2 = engine.ingest_observation(
             _make_obs(
                 road_segment_id="seg-101",
@@ -344,9 +330,7 @@ class TestRoadSegmentIsolation:
     def test_different_segment_no_merge(self) -> None:
         """Parallel road / flyover — different road_segment_id prevents merge."""
         engine = HazardFusionEngine()
-        h1 = engine.ingest_observation(
-            _make_obs(road_segment_id="seg-101", position=_POS_A)
-        )
+        h1 = engine.ingest_observation(_make_obs(road_segment_id="seg-101", position=_POS_A))
         h2 = engine.ingest_observation(
             _make_obs(
                 road_segment_id="seg-202",  # different segment (e.g. flyover)
@@ -360,9 +344,7 @@ class TestRoadSegmentIsolation:
     def test_one_segment_null_allows_merge(self) -> None:
         """If one observation has no road segment, merging is allowed."""
         engine = HazardFusionEngine()
-        h1 = engine.ingest_observation(
-            _make_obs(road_segment_id="seg-101", position=_POS_A)
-        )
+        h1 = engine.ingest_observation(_make_obs(road_segment_id="seg-101", position=_POS_A))
         h2 = engine.ingest_observation(
             _make_obs(
                 road_segment_id=None,

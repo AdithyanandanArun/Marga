@@ -19,18 +19,18 @@ logger = logging.getLogger(__name__)
 
 # ── Type-specific TTL defaults (seconds) ──────────────────────────────
 DEFAULT_TTL: dict[HazardType, int] = {
-    HazardType.POTHOLE: 86_400,         # 24 h — semi-permanent
-    HazardType.BUMP: 604_800,           # 7 d  — infrastructure
-    HazardType.DEBRIS: 3_600,           # 1 h  — typically cleared fast
-    HazardType.FLOOD: 7_200,            # 2 h
-    HazardType.LANDSLIDE: 86_400,       # 24 h
-    HazardType.ANIMAL: 1_800,           # 30 min — highly transient
+    HazardType.POTHOLE: 86_400,  # 24 h — semi-permanent
+    HazardType.BUMP: 604_800,  # 7 d  — infrastructure
+    HazardType.DEBRIS: 3_600,  # 1 h  — typically cleared fast
+    HazardType.FLOOD: 7_200,  # 2 h
+    HazardType.LANDSLIDE: 86_400,  # 24 h
+    HazardType.ANIMAL: 1_800,  # 30 min — highly transient
     HazardType.STALLED_VEHICLE: 3_600,  # 1 h
-    HazardType.CONSTRUCTION: 604_800,   # 7 d
-    HazardType.LANE_CLOSURE: 86_400,    # 24 h
-    HazardType.ACCIDENT: 7_200,         # 2 h
-    HazardType.LOW_VISIBILITY: 3_600,   # 1 h
-    HazardType.OTHER: 3_600,            # 1 h
+    HazardType.CONSTRUCTION: 604_800,  # 7 d
+    HazardType.LANE_CLOSURE: 86_400,  # 24 h
+    HazardType.ACCIDENT: 7_200,  # 2 h
+    HazardType.LOW_VISIBILITY: 3_600,  # 1 h
+    HazardType.OTHER: 3_600,  # 1 h
 }
 
 # ── Decay parameters ──────────────────────────────────────────────────

@@ -15,10 +15,10 @@ from typing import Any
 from marga_schemas.common import ActorType
 from marga_schemas.trust import SignedMessage, TrustAssessment, TrustEvent, TrustLevel
 
-from marga_trust.credential import CredentialVerifier
-from marga_trust.plausibility import PlausibilityChecker
-from marga_trust.rate_limiter import RateLimiter
-from marga_trust.replay import ReplayCache
+from .credential import CredentialVerifier
+from .plausibility import PlausibilityChecker
+from .rate_limiter import RateLimiter
+from .replay import ReplayCache
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +74,12 @@ class TrustValidator:
             reasons.append(reject_reason)
             self._emit_event(sender, "TIMESTAMP_REJECTED", {"reason": reject_reason})
             return self._build_assessment(
-                sender, TrustLevel.UNTRUSTED, now, reasons,
-                credential_verified=False, plausibility_score=0.0,
+                sender,
+                TrustLevel.UNTRUSTED,
+                now,
+                reasons,
+                credential_verified=False,
+                plausibility_score=0.0,
             )
 
         # ----- Stage 3: Replay cache -----
@@ -91,8 +95,12 @@ class TrustValidator:
             event_type = "TAMPERED_REPLAY" if replay_reason == "TAMPERED_REPLAY" else "REPLAY_REJECTED"
             self._emit_event(sender, event_type, {"nonce": message.nonce, "reason": replay_reason})
             return self._build_assessment(
-                sender, TrustLevel.UNTRUSTED, now, reasons,
-                credential_verified=False, plausibility_score=0.0,
+                sender,
+                TrustLevel.UNTRUSTED,
+                now,
+                reasons,
+                credential_verified=False,
+                plausibility_score=0.0,
             )
 
         # ----- Stage 4: Signature / Credential verification -----
@@ -124,7 +132,10 @@ class TrustValidator:
             reasons.append("RATE_LIMITED")
             self._emit_event(sender, "RATE_LIMITED", {"remaining": rate_remaining})
             return self._build_assessment(
-                sender, TrustLevel.UNTRUSTED, now, reasons,
+                sender,
+                TrustLevel.UNTRUSTED,
+                now,
+                reasons,
                 credential_verified=credential_verified,
                 plausibility_score=0.0,
                 rate_limit_remaining=0,
@@ -137,7 +148,10 @@ class TrustValidator:
         trust_level = self._adjust_trust(trust_level, plausibility_score, credential_verified)
 
         return self._build_assessment(
-            sender, trust_level, now, reasons,
+            sender,
+            trust_level,
+            now,
+            reasons,
             credential_verified=credential_verified,
             plausibility_score=plausibility_score,
             rate_limit_remaining=rate_remaining,

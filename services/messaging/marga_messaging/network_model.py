@@ -9,10 +9,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from marga_schemas.messaging import LinkState, V2XMessage
 from marga_schemas.common import ConnectivityState
+from marga_schemas.messaging import LinkState, V2XMessage
 
-from marga_messaging.transport import V2XTransport
+from .transport import V2XTransport
 
 logger = logging.getLogger(__name__)
 

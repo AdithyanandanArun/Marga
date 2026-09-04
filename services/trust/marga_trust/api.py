@@ -4,16 +4,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+from marga_schemas.trust import SignedMessage, TrustAssessment, TrustLevel
 from pydantic import BaseModel
 
-from marga_schemas.trust import SignedMessage, TrustAssessment, TrustLevel
-
-from marga_trust.credential import CredentialVerifier
-from marga_trust.rate_limiter import RateLimiter
-from marga_trust.replay import ReplayCache
-from marga_trust.plausibility import PlausibilityChecker
-from marga_trust.validator import TrustValidator
+from .credential import CredentialVerifier
+from .plausibility import PlausibilityChecker
+from .rate_limiter import RateLimiter
+from .replay import ReplayCache
+from .validator import TrustValidator
 
 # ---------------------------------------------------------------
 # Singleton components (shared across requests in this process)
@@ -63,6 +62,7 @@ class HealthResponse(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------
 
+
 @router.post("/validate", response_model=TrustAssessment)
 async def validate_message(message: SignedMessage) -> TrustAssessment:
     """Validate a signed message through the full trust pipeline."""
@@ -83,9 +83,7 @@ async def get_identity(sender_id: str) -> dict:
 @router.post("/verify-emergency", response_model=EmergencyVerifyResponse)
 async def verify_emergency(request: EmergencyVerifyRequest) -> EmergencyVerifyResponse:
     """Verify emergency credentials for a sender."""
-    verified = _credential_verifier.verify_emergency(
-        request.sender_id, request.credential_ref
-    )
+    verified = _credential_verifier.verify_emergency(request.sender_id, request.credential_ref)
     return EmergencyVerifyResponse(
         verified=verified,
         sender_id=request.sender_id,
@@ -116,6 +114,7 @@ async def health() -> HealthResponse:
 # ---------------------------------------------------------------
 # Component accessors (for tests / programmatic config)
 # ---------------------------------------------------------------
+
 
 def get_validator() -> TrustValidator:
     return _validator

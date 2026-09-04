@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 
 from marga_schemas.alert import Alert, AlertPriority
 
-
 # ---------------------------------------------------------------------------
 # Default weight set – tuned so a critical collision with low time-to-conflict
 # always outranks an informational road-hazard notice.

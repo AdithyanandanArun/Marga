@@ -6,8 +6,8 @@ efficient look-ups by bbox, actor_id, alert_type, priority, and state.
 
 from __future__ import annotations
 
-import math
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -100,7 +100,7 @@ class AlertStore:
             priority = AlertPriority(priority)
 
         results: list[Alert] = []
-        source = self._active.values()
+        source: Iterable[Alert] = self._active.values()
 
         # If querying for a terminal state, search history instead.
         if state in {AlertState.RESOLVED, AlertState.EXPIRED, AlertState.SUPPRESSED}:

@@ -18,8 +18,6 @@ Key design choices
 from __future__ import annotations
 
 import logging
-import math
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from marga_schemas.common import GeoPoint
@@ -176,9 +174,7 @@ class HazardFusionEngine:
         if bbox is not None:
             min_lat, min_lon, max_lat, max_lon = bbox
             hazards = [
-                h
-                for h in hazards
-                if min_lat <= h.position.lat <= max_lat and min_lon <= h.position.lon <= max_lon
+                h for h in hazards if min_lat <= h.position.lat <= max_lat and min_lon <= h.position.lon <= max_lon
             ]
         return [h for h in hazards if h.state not in (HazardState.EXPIRED,)]
 
@@ -186,9 +182,7 @@ class HazardFusionEngine:
     # Internal: matching
     # ------------------------------------------------------------------
 
-    def _find_best_match(
-        self, obs: HazardObservation
-    ) -> tuple[Hazard | None, float]:
+    def _find_best_match(self, obs: HazardObservation) -> tuple[Hazard | None, float]:
         """Find the best existing hazard to associate with *obs*."""
         candidates = self.spatial_index.query_nearby(
             obs.position,
@@ -317,10 +311,7 @@ class HazardFusionEngine:
 
         # ── State promotion ────────────────────────────────────
         unique_sources = len(hazard.source_ids)
-        if (
-            hazard.state == HazardState.CANDIDATE
-            and unique_sources >= self.verification_source_count
-        ):
+        if hazard.state == HazardState.CANDIDATE and unique_sources >= self.verification_source_count:
             hazard.state = HazardState.VERIFIED
             logger.info("Hazard %s promoted to VERIFIED (%d sources)", hid, unique_sources)
 
@@ -329,9 +320,7 @@ class HazardFusionEngine:
 
         return hazard
 
-    def _compute_confidence(
-        self, hazard: Hazard, obs: HazardObservation, is_new_source: bool
-    ) -> float:
+    def _compute_confidence(self, hazard: Hazard, obs: HazardObservation, is_new_source: bool) -> float:
         """Compute fused confidence.
 
         Independent corroboration (new sources) contributes much more than

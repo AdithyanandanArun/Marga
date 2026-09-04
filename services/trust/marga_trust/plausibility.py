@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 # Physical limits by actor type (m/s for speed, m/s^2 for accel)
 # ---------------------------------------------------------------
 _MAX_SPEED: dict[ActorType, float] = {
-    ActorType.PEDESTRIAN: 12.0,     # sprinting
+    ActorType.PEDESTRIAN: 12.0,  # sprinting
     ActorType.ANIMAL: 25.0,
     ActorType.BIKE: 30.0,
-    ActorType.AUTO: 30.0,           # auto-rickshaw
-    ActorType.CAR: 70.0,            # ~250 km/h
+    ActorType.AUTO: 30.0,  # auto-rickshaw
+    ActorType.CAR: 70.0,  # ~250 km/h
     ActorType.BUS: 40.0,
     ActorType.TRUCK: 35.0,
     ActorType.AMBULANCE: 55.0,

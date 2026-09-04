@@ -17,7 +17,6 @@ from uuid import UUID
 
 from marga_schemas.alert import Alert, AlertState
 
-
 # ---------------------------------------------------------------------------
 # Valid state transitions
 # ---------------------------------------------------------------------------
@@ -88,9 +87,7 @@ class AlertLifecycleManager:
             if isinstance(new_state, str):
                 new_state = AlertState(new_state)
             if new_state not in _TRANSITIONS.get(alert.state, set()):
-                raise ValueError(
-                    f"Invalid transition: {alert.state.value} → {new_state.value}"
-                )
+                raise ValueError(f"Invalid transition: {alert.state.value} → {new_state.value}")
             updates["state"] = new_state
 
         updates["updated_at"] = _utcnow()
@@ -105,9 +102,7 @@ class AlertLifecycleManager:
             raise KeyError(f"Alert {alert_id} not found")
 
         if AlertState.RESOLVED not in _TRANSITIONS.get(alert.state, set()):
-            raise ValueError(
-                f"Cannot resolve alert in state {alert.state.value}"
-            )
+            raise ValueError(f"Cannot resolve alert in state {alert.state.value}")
 
         alert = alert.model_copy(
             update={
@@ -127,14 +122,22 @@ class AlertLifecycleManager:
             if alert.state != AlertState.ACTIVE:
                 continue
             if alert.expires_at is not None:
-                exp = alert.expires_at.replace(tzinfo=timezone.utc) if alert.expires_at.tzinfo is None else alert.expires_at
+                exp = (
+                    alert.expires_at.replace(tzinfo=timezone.utc)
+                    if alert.expires_at.tzinfo is None
+                    else alert.expires_at
+                )
                 if now >= exp:
                     self._alerts[alert.alert_id] = alert.model_copy(
                         update={"state": AlertState.EXPIRED, "updated_at": now}
                     )
                     expired_ids.append(alert.alert_id)
             elif alert.ttl_s is not None:
-                created = alert.created_at.replace(tzinfo=timezone.utc) if alert.created_at.tzinfo is None else alert.created_at
+                created = (
+                    alert.created_at.replace(tzinfo=timezone.utc)
+                    if alert.created_at.tzinfo is None
+                    else alert.created_at
+                )
                 if (now - created).total_seconds() >= alert.ttl_s:
                     self._alerts[alert.alert_id] = alert.model_copy(
                         update={"state": AlertState.EXPIRED, "updated_at": now}

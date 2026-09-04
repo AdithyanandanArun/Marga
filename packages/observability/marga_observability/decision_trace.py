@@ -85,9 +85,7 @@ class DecisionTracer:
         persist_fn: PersistFn | None = None,
         flush_threshold: int | None = None,
     ) -> None:
-        self._buffer: collections.deque[DecisionTrace] = collections.deque(
-            maxlen=max_buffer_size
-        )
+        self._buffer: collections.deque[DecisionTrace] = collections.deque(maxlen=max_buffer_size)
         self._index_by_id: dict[UUID, DecisionTrace] = {}
         self._persist_fn = persist_fn
         self._flush_threshold = flush_threshold or max_buffer_size
@@ -131,9 +129,7 @@ class DecisionTracer:
             if risk_id is not None and risk_id not in trace.output_ids:
                 continue
             if actor_id is not None:
-                actor_match = any(
-                    inp.entity_id == actor_id for inp in trace.inputs
-                )
+                actor_match = any(inp.entity_id == actor_id for inp in trace.inputs)
                 if not actor_match:
                     continue
             results.append(trace)

@@ -6,10 +6,9 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from marga_persistence.models import Base
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from marga_persistence.models import Base
 
 # Alembic Config object
 config = context.config
@@ -33,7 +32,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection) -> None:  # noqa: ANN001
+def do_run_migrations(connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()

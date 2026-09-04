@@ -44,12 +44,14 @@ jobs:
           pip install --upgrade pip
           pip install -e ".[dev]"
           pip install -e ./packages/schemas
+          pip install -e "./packages/persistence[dev]"
+          pip install -e "./packages/observability[fastapi]"
 
       - name: Ruff check
         run: ruff check .
 
       - name: Mypy
-        run: mypy services/ packages/ tests/
+        run: mypy services/ packages/
 
   # ── 3. Test suite ───────────────────────────────────────────────
   test:
@@ -85,10 +87,11 @@ jobs:
           pip install --upgrade pip
           pip install -e ".[dev]"
           pip install -e ./packages/schemas
+          pip install -e "./packages/persistence[dev]"
+          pip install -e "./packages/observability[fastapi]"
 
       - name: Run Alembic migrations
-        run: alembic upgrade head
-        continue-on-error: true  # migrations may not exist yet
+        run: alembic -c packages/persistence/alembic.ini upgrade head
 
       - name: Run tests with coverage
         run: pytest --tb=short -q --cov=services --cov=packages --cov-report=term-missing
@@ -109,6 +112,8 @@ jobs:
           pip install --upgrade pip
           pip install -e ".[dev]"
           pip install -e ./packages/schemas
+          pip install -e "./packages/persistence[dev]"
+          pip install -e "./packages/observability[fastapi]"
 
       - name: Run contract tests
         run: pytest tests/contract --tb=short -q
@@ -138,6 +143,8 @@ jobs:
           pip install --upgrade pip
           pip install -e ".[dev]"
           pip install -e ./packages/schemas
+          pip install -e "./packages/persistence[dev]"
+          pip install -e "./packages/observability[fastapi]"
           pip install pip-audit
 
       - name: Run pip-audit

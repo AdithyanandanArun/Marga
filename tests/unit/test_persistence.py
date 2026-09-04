@@ -12,9 +12,6 @@ from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from marga_persistence.database import create_engine, get_session
 from marga_persistence.models import (
     AlertRow,
@@ -30,11 +27,12 @@ from marga_persistence.repository import (
     AuditRepository,
     HazardRepository,
 )
-
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def engine():
@@ -57,6 +55,7 @@ async def session(engine):
 # Engine / session tests
 # ---------------------------------------------------------------------------
 
+
 class TestEngine:
     @pytest.mark.asyncio
     async def test_create_engine_returns_async_engine(self):
@@ -77,6 +76,7 @@ class TestEngine:
 # ---------------------------------------------------------------------------
 # Model creation tests
 # ---------------------------------------------------------------------------
+
 
 class TestModels:
     def test_hazard_row_defaults(self):
@@ -142,6 +142,7 @@ class TestModels:
 # ---------------------------------------------------------------------------
 # Repository CRUD tests
 # ---------------------------------------------------------------------------
+
 
 class TestHazardRepository:
     @pytest.mark.asyncio
@@ -356,7 +357,7 @@ class TestAuditRepository:
     async def test_query_with_limit(self, session):
         repo = AuditRepository(session)
         now = datetime.now(timezone.utc)
-        for i in range(10):
+        for _ in range(10):
             evt = SystemAuditEventRow(
                 event_type="BULK",
                 source_service="test",
@@ -372,6 +373,7 @@ class TestAuditRepository:
 # ---------------------------------------------------------------------------
 # Alembic migration syntax check
 # ---------------------------------------------------------------------------
+
 
 class TestMigration:
     def test_migration_module_imports(self):

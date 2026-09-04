@@ -4,6 +4,7 @@ Revision ID: 0001
 Revises: None
 Create Date: 2026-09-04
 """
+
 from typing import Sequence, Union
 
 import geoalchemy2
@@ -36,9 +37,7 @@ def upgrade() -> None:
         sa.Column("first_seen", sa.DateTime(timezone=True), nullable=False),
         sa.Column("last_seen", sa.DateTime(timezone=True), nullable=False),
         sa.Column("ttl_s", sa.Integer(), nullable=False),
-        sa.Column(
-            "state", sa.String(32), nullable=False, server_default="CANDIDATE"
-        ),
+        sa.Column("state", sa.String(32), nullable=False, server_default="CANDIDATE"),
         sa.Column("evidence_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("road_segment_id", sa.String(128), nullable=True),
         sa.Column(
@@ -61,9 +60,7 @@ def upgrade() -> None:
         sa.Column("hazard_id", sa.Uuid(), nullable=True),
         sa.Column("source_id", sa.String(128), nullable=False),
         sa.Column("detector_confidence", sa.Float(), nullable=False),
-        sa.Column(
-            "severity_hint", sa.Float(), nullable=False, server_default="0.5"
-        ),
+        sa.Column("severity_hint", sa.Float(), nullable=False, server_default="0.5"),
         sa.Column("observed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "position",
@@ -77,9 +74,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.ForeignKeyConstraint(
-            ["hazard_id"], ["hazards.hazard_id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["hazard_id"], ["hazards.hazard_id"], ondelete="SET NULL"),
     )
 
     op.create_table(
@@ -109,9 +104,7 @@ def upgrade() -> None:
         sa.Column("alert_id", sa.Uuid(), primary_key=True),
         sa.Column("alert_type", sa.String(64), nullable=False),
         sa.Column("priority", sa.String(32), nullable=False),
-        sa.Column(
-            "state", sa.String(32), nullable=False, server_default="ACTIVE"
-        ),
+        sa.Column("state", sa.String(32), nullable=False, server_default="ACTIVE"),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("description", sa.Text(), nullable=False),
         sa.Column(
@@ -184,9 +177,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_alerts_state", "alerts", ["state"])
     op.create_index("ix_alerts_priority", "alerts", ["priority"])
-    op.create_index(
-        "ix_trust_events_sender_id", "trust_events", ["sender_id"]
-    )
+    op.create_index("ix_trust_events_sender_id", "trust_events", ["sender_id"])
     op.create_index(
         "ix_system_audit_events_type",
         "system_audit_events",

@@ -100,6 +100,7 @@ if _otel_available:
 # downstream service packages are not yet implemented.
 # ---------------------------------------------------------------------------
 
+
 def _try_mount_router(module_path: str, attr: str, prefix: str, tag: str) -> None:
     """Attempt to import and mount a service router; log and skip on failure."""
     try:
@@ -113,10 +114,10 @@ def _try_mount_router(module_path: str, attr: str, prefix: str, tag: str) -> Non
         logger.debug("Router %s not available: %s", module_path, exc)
 
 
-_try_mount_router("services.hazards.marga_hazards.router", "router", "/v1/hazards", "hazards")
-_try_mount_router("services.trust.marga_trust.router", "router", "/v1/trust", "trust")
-_try_mount_router("services.messaging.marga_messaging.router", "router", "/v1/messaging", "messaging")
-_try_mount_router("services.alerts.marga_alerts.router", "router", "/v1/alerts", "alerts")
+_try_mount_router("services.hazards.marga_hazards.api", "router", "", "hazards")
+_try_mount_router("services.trust.marga_trust.api", "router", "", "trust")
+_try_mount_router("services.messaging.marga_messaging.api", "router", "", "messaging")
+_try_mount_router("services.alerts.marga_alerts.api", "router", "", "alerts")
 
 
 # ---------------------------------------------------------------------------
