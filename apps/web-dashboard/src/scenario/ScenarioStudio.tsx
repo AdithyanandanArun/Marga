@@ -48,19 +48,26 @@ export function ScenarioStudio() {
     } catch { return []; }
   });
   const [showList, setShowList] = useState(false);
+  const [placingActor, setPlacingActor] = useState(false);
 
   const update = useCallback(<K extends keyof typeof scenario>(key: K, value: (typeof scenario)[K]) => {
     setScenario((s) => ({ ...s, [key]: value }));
   }, []);
 
   const addActor = () => {
+    setPlacingActor(true);
+  };
+
+  const placeActorAt = useCallback((lat: number, lon: number) => {
+    if (!placingActor) return;
     const actor: ScenarioActor = {
       actor_id: `actor-${Date.now()}`,
       actor_type: 'CAR',
-      start_position: { lat: 12.9716, lon: 77.5946 },
+      start_position: { lat, lon },
     };
     update('actors', [...scenario.actors, actor]);
-  };
+    setPlacingActor(false);
+  }, [placingActor, scenario.actors, update]);
 
   const removeActor = (idx: number) => {
     update('actors', scenario.actors.filter((_, i) => i !== idx));
@@ -206,7 +213,13 @@ export function ScenarioStudio() {
               <div style={studioStyles.field}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <label style={studioStyles.label}><Users size={12} /> Actors ({scenario.actors.length})</label>
-                  <button onClick={addActor} style={studioStyles.addBtn}><Plus size={12} /> Add</button>
+                  {placingActor ? (
+                    <button onClick={() => setPlacingActor(false)} style={{ ...studioStyles.addBtn, color: 'var(--accent-red)' }}>
+                      Cancel
+                    </button>
+                  ) : (
+                    <button onClick={addActor} style={studioStyles.addBtn}><Plus size={12} /> Add</button>
+                  )}
                 </div>
                 {scenario.actors.map((a, i) => (
                   <div key={a.actor_id} style={studioStyles.listItem}>
@@ -237,7 +250,10 @@ export function ScenarioStudio() {
         </aside>
 
         <div style={studioStyles.mapArea}>
-          <MapView />
+          <MapView
+            onMapClick={placingActor ? placeActorAt : undefined}
+            placementMode={placingActor}
+          />
         </div>
       </div>
     </div>
