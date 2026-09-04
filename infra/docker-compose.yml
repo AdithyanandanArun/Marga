@@ -34,14 +34,81 @@ services:
   nats:
     image: nats:2.10-alpine
     container_name: marga-nats
-    command: ["--js"]
+    command: ["--js", "--http_port", "8222"]
     ports:
       - "4222:4222"
+      - "8222:8222"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.0
+    container_name: marga-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: marga-jaeger
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: marga-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+asyncpg://marga:marga@postgres:5432/marga
+      REDIS_URL: redis://redis:6379/0
+      EVENT_BUS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: marga-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  scenario-service:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: marga-scenario
+    ports:
+      - "8001:8001"
+    command: ["uvicorn", "services.scenario_service.app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+asyncpg://marga:marga@postgres:5432/marga
+      EVENT_BUS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: marga-scenario
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

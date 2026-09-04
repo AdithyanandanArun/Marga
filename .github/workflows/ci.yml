@@ -93,6 +93,50 @@ jobs:
       - name: Run Alembic migrations
         run: alembic -c packages/persistence/alembic.ini upgrade head
 
+      - name: Verify migration schema
+        env:
+          DATABASE_URL: postgresql+asyncpg://marga:marga@localhost:5432/marga
+        run: |
+          python -c "
+          import asyncio
+          from sqlalchemy.ext.asyncio import create_async_engine
+          from sqlalchemy import text
+
+          async def check():
+              engine = create_async_engine('postgresql+asyncpg://marga:marga@localhost:5432/marga')
+              async with engine.connect() as conn:
+                  result = await conn.execute(text(
+                      \"SELECT table_name FROM information_schema.tables \"
+                      \"WHERE table_schema = 'public' ORDER BY table_name\"
+                  ))
+                  tables = {row[0] for row in result}
+                  expected = {'hazards', 'hazard_observations', 'incidents', 'alerts', 'trust_events', 'system_audit_events'}
+                  missing = expected - tables
+                  if missing:
+                      raise AssertionError(f'Missing tables: {missing}')
+
+                  result = await conn.execute(text('SELECT PostGIS_Version()'))
+                  version = result.scalar()
+                  print(f'PostGIS version: {version}')
+
+                  result = await conn.execute(text(
+                      \"SELECT indexname FROM pg_indexes WHERE indexname LIKE 'ix_%'\"
+                  ))
+                  indices = [row[0] for row in result]
+                  print(f'Indices: {indices}')
+
+                  print(f'All {len(expected)} tables verified')
+              await engine.dispose()
+
+          asyncio.run(check())
+          "
+
+      - name: Verify Alembic downgrade
+        run: alembic -c packages/persistence/alembic.ini downgrade base
+
+      - name: Re-upgrade for tests
+        run: alembic -c packages/persistence/alembic.ini upgrade head
+
       - name: Run tests with coverage
         run: pytest --tb=short -q --cov=services --cov=packages --cov-report=term-missing
 

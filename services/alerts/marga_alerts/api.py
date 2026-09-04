@@ -186,6 +186,14 @@ async def create_alert(req: AlertCreateRequest) -> dict[str, Any]:
 
     if alert.state == AlertState.ACTIVE:
         await _broadcast("alert.issued", alert)
+        # NATS (obj 2.1)
+        try:
+            from packages.event_bus.bus import get_event_bus
+            bus = get_event_bus()
+            if bus and bus.connected:
+                await bus.publish("alert.issued", json.loads(alert.model_dump_json()))
+        except Exception:
+            pass
 
     return json.loads(alert.model_dump_json())
 
@@ -212,6 +220,14 @@ async def patch_alert(alert_id: UUID, req: AlertPatchRequest) -> dict[str, Any]:
 
     event_type = "alert.cleared" if alert.state in {AlertState.RESOLVED, AlertState.EXPIRED} else "alert.updated"
     await _broadcast(event_type, alert)
+    # NATS (obj 2.1)
+    try:
+        from packages.event_bus.bus import get_event_bus
+        bus = get_event_bus()
+        if bus and bus.connected:
+            await bus.publish(event_type, json.loads(alert.model_dump_json()))
+    except Exception:
+        pass
 
     return json.loads(alert.model_dump_json())
 
@@ -240,14 +256,23 @@ async def stream_alerts(
     client = _WsClient(ws, parsed_bbox)
     async with _clients_lock:
         _clients.add(client)
+    # Metrics (obj 2.5)
+    try:
+        from marga_observability.metrics import metrics as _m
+        _m.websocket_clients.inc()
+    except Exception:
+        pass
 
     try:
-        # Keep connection alive — the client can send pings or close.
         while True:
-            # We read but ignore client messages (could be pings/filter updates).
             await ws.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
         async with _clients_lock:
             _clients.discard(client)
+        try:
+            from marga_observability.metrics import metrics as _m
+            _m.websocket_clients.dec()
+        except Exception:
+            pass

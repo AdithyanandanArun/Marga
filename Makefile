@@ -93,14 +93,21 @@ run-web:
 import-map:
 	@echo "Map import not yet configured for REGION=$(REGION)"
 
+db-migrate:
+	$(ALEMBIC) -c packages/persistence/alembic.ini upgrade head
+
+db-reset:
+	$(ALEMBIC) -c packages/persistence/alembic.ini downgrade base
+	$(ALEMBIC) -c packages/persistence/alembic.ini upgrade head
+
 docker-build:
-	docker compose -f infra/compose/docker-compose.yml build
+	docker compose build
 
 docker-up:
-	docker compose -f infra/compose/docker-compose.yml up -d
+	docker compose up -d
 
 docker-down:
-	docker compose -f infra/compose/docker-compose.yml down
+	docker compose down
 
 clean:
 	rm -rf $(VENV) .mypy_cache .pytest_cache .ruff_cache __pycache__

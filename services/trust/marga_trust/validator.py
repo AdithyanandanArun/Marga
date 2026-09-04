@@ -58,6 +58,17 @@ class TrustValidator:
         before expensive ones (plausibility).  Early rejection short-circuits
         the remaining stages.
         """
+        try:
+            from marga_observability.span import optional_span
+            _span_ctx = optional_span("trust-validator", "trust.validate", {"sender": message.sender_pseudonym})
+        except ImportError:
+            from contextlib import nullcontext
+            _span_ctx = nullcontext()
+
+        with _span_ctx:
+            return self._validate_inner(message)
+
+    def _validate_inner(self, message: SignedMessage) -> TrustAssessment:
         sender = message.sender_pseudonym
         now = datetime.now(UTC)
         reasons: list[str] = []
@@ -264,6 +275,27 @@ class TrustValidator:
         )
         self._audit_log.append(event)
         logger.info("TrustEvent: %s sender=%s %s", event_type, sender_id, detail)
+        # Metrics (obj 2.5)
+        if event_type in ("REPLAY_REJECTED", "TAMPERED_REPLAY", "RATE_LIMITED",
+                          "SPOOF_DETECTED", "TIMESTAMP_REJECTED", "PLAUSIBILITY_ANOMALY"):
+            try:
+                from marga_observability.metrics import metrics as _m
+                _m.trust_rejections_total.labels(reason=event_type).inc()
+            except Exception:
+                pass
+        # NATS (obj 2.1)
+        try:
+            from packages.event_bus.bus import get_event_bus
+            bus = get_event_bus()
+            if bus and bus.connected:
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(bus.publish("trust.assessment.updated", event.model_dump(mode="json")))
+                except RuntimeError:
+                    pass
+        except Exception:
+            pass
 
     @staticmethod
     def _build_assessment(

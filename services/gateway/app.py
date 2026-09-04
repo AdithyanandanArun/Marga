@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -34,25 +35,21 @@ _prometheus_available = False
 try:
     from prometheus_client import (
         CONTENT_TYPE_LATEST,
-        CollectorRegistry,
         Counter,
         Histogram,
         generate_latest,
     )
 
     _prometheus_available = True
-    _registry = CollectorRegistry()
     _request_count = Counter(
         "marga_http_requests_total",
         "Total HTTP requests",
         ["method", "path", "status"],
-        registry=_registry,
     )
     _request_duration = Histogram(
         "marga_http_request_duration_seconds",
         "HTTP request duration in seconds",
         ["method", "path"],
-        registry=_registry,
     )
 except ImportError:
     pass
@@ -66,10 +63,62 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Marga gateway starting up")
+
+    # -- OpenTelemetry tracing (obj 2.4) --
+    try:
+        from marga_observability.tracing import setup_tracing
+
+        _otlp = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        _svc = os.environ.get("OTEL_SERVICE_NAME", "marga-gateway")
+        setup_tracing(_svc, otlp_endpoint=_otlp)
+        logger.info("OpenTelemetry tracing configured (endpoint=%s)", _otlp)
+    except Exception as exc:
+        logger.debug("OpenTelemetry tracing not configured: %s", exc)
+
+    # -- NATS JetStream event bus (obj 2.1) --
+    try:
+        from packages.event_bus.bus import EventBus, set_event_bus
+
+        _nats_url = os.environ.get("EVENT_BUS_URL", "nats://localhost:4222")
+        _bus = EventBus(_nats_url)
+        await _bus.connect()
+        set_event_bus(_bus)
+    except Exception as exc:
+        logger.debug("Event bus not available: %s", exc)
+
+    # -- Redis actor TTL + dedup (obj 2.2) --
+    try:
+        from packages.redis_store.actor_ttl import ActorTTLManager, set_ttl_manager
+
+        _redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        _ttl_mgr = ActorTTLManager(_redis_url)
+        await _ttl_mgr.connect()
+        set_ttl_manager(_ttl_mgr)
+    except Exception as exc:
+        logger.debug("Redis actor TTL not available: %s", exc)
+
     # Mounted applications do not receive an independent lifespan under every
     # ASGI server, so initialize the safety registry explicitly here.
     initialize_safety_detectors()
     yield
+
+    # -- Shutdown --
+    try:
+        from packages.event_bus.bus import get_event_bus
+
+        bus = get_event_bus()
+        if bus:
+            await bus.close()
+    except Exception:
+        pass
+    try:
+        from packages.redis_store.actor_ttl import get_ttl_manager
+
+        mgr = get_ttl_manager()
+        if mgr:
+            await mgr.close()
+    except Exception:
+        pass
     logger.info("Marga gateway shutting down")
 
 
@@ -165,8 +214,8 @@ async def health() -> dict[str, Any]:
 
 
 @app.get("/metrics", tags=["ops"], include_in_schema=False)
-async def metrics() -> Response:
-    """Prometheus-compatible metrics endpoint."""
+async def metrics_endpoint() -> Response:
+    """Prometheus-compatible metrics endpoint — exposes all service metrics."""
     if not _prometheus_available:
         return Response(content="# prometheus-client not installed\n", media_type="text/plain")
-    return Response(content=generate_latest(_registry), media_type=CONTENT_TYPE_LATEST)
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
