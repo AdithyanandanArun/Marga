@@ -9,6 +9,7 @@ requires-python = ">=3.12"
 description = "Marga V2X — India-ready vehicle-to-everything safety platform"
 dependencies = [
     "marga-schemas",
+    "marga-osm-import",
 ]
 
 [tool.uv.workspace]
@@ -17,7 +18,12 @@ members = [
     "tools/osm-import",
 ]
 
+[tool.uv.sources]
+marga-schemas = { workspace = true }
+marga-osm-import = { workspace = true }
+
 [tool.uv]
+package = false
 dev-dependencies = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
