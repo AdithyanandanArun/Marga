@@ -78,3 +78,53 @@ class PositionService:
                 "method": PositionMethod.DEAD_RECKONED,
             }
         )
+
+
+class PositionFusionService(PositionService):
+    """Small deterministic fusion layer for sequential canonical observations.
+
+    The service keeps no adapter-specific state.  It predicts the prior estimate
+    to the new timestamp, then combines independent circular uncertainty using
+    inverse-variance weighting.  A late/out-of-order state is rejected so a
+    stale source cannot move the current estimate backwards in time.
+    """
+
+    def __init__(self, policy: PositionPolicy | None = None) -> None:
+        super().__init__(policy)
+        self._latest: dict[str, PositionEstimate] = {}
+
+    def ingest(self, state: VehicleState) -> PositionEstimate:
+        observed = self.estimate(state)
+        previous = self._latest.get(state.actor_id)
+        if previous is None:
+            self._latest[state.actor_id] = observed
+            return observed
+        elapsed_s = (state.ts - previous.ts).total_seconds()
+        if elapsed_s <= 0:
+            raise ValueError("position observations must be strictly increasing per actor")
+        if elapsed_s > self.policy.max_dead_reckoning_s:
+            self._latest[state.actor_id] = observed
+            return observed
+        predicted = self.dead_reckon(previous, elapsed_s)
+        predicted_var = max(predicted.uncertainty_radius_m, 0.1) ** 2
+        observed_var = max(observed.uncertainty_radius_m, 0.1) ** 2
+        predicted_weight = 1.0 / predicted_var
+        observed_weight = 1.0 / observed_var
+        total_weight = predicted_weight + observed_weight
+        plane = LocalTangentPlane(observed.position.lat, observed.position.lon)
+        predicted_east, predicted_north = plane.project(predicted.position)
+        east = predicted_east * predicted_weight / total_weight
+        north = predicted_north * predicted_weight / total_weight
+        lat, lon = plane.unproject(east, north)
+        uncertainty = (1.0 / total_weight) ** 0.5
+        fused = observed.model_copy(
+            update={
+                "position": GeoPoint(lat=lat, lon=lon, altitude_m=observed.position.altitude_m),
+                "uncertainty_radius_m": uncertainty,
+                "confidence": max(predicted.confidence, observed.confidence)
+                * exp(-self.policy.confidence_decay_per_m * uncertainty),
+                "method": PositionMethod.FUSED,
+            }
+        )
+        self._latest[state.actor_id] = fused
+        return fused

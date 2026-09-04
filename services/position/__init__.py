@@ -1,5 +1,5 @@
 """Position-confidence and deterministic dead-reckoning primitives."""
 
-from .service import PositionService
+from .service import PositionFusionService, PositionService
 
-__all__ = ["PositionService"]
+__all__ = ["PositionFusionService", "PositionService"]

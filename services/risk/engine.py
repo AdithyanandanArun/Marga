@@ -10,6 +10,8 @@ from math import exp
 from packages.geo import LocalTangentPlane
 from packages.schemas import PositionEstimate, RiskEvent, RiskType
 
+from .spatial import UniformGridIndex
+
 
 @dataclass(frozen=True, slots=True)
 class RiskPolicy:
@@ -117,6 +119,41 @@ class RiskEngine:
         risks: list[RiskEvent] = []
         for index, first in enumerate(ordered):
             for second in ordered[index + 1 :]:
+                risk = self.evaluate_pair(first, second, detected_at=detected_at)
+                if risk is not None:
+                    risks.append(risk)
+        return risks
+
+    def evaluate_spatial(
+        self, estimates: Iterable[PositionEstimate], *, detected_at: datetime | None = None
+    ) -> list[RiskEvent]:
+        """Evaluate dynamically reachable neighbours with deterministic deduplication.
+
+        Candidate radius is a conservative actor travel distance plus the
+        policy clearance and its uncertainty. Scoring remains exactly the same
+        as :meth:`evaluate_pair`.
+        """
+        ordered = tuple(estimates)
+        index = UniformGridIndex(ordered)
+        seen_pairs: set[tuple[str, str]] = set()
+        risks: list[RiskEvent] = []
+        for first in ordered:
+            speed = (first.velocity_east_mps**2 + first.velocity_north_mps**2) ** 0.5
+            radius = (
+                speed * self.policy.horizon_s
+                + self.policy.base_clearance_m
+                + first.uncertainty_radius_m
+            )
+            for second in index.nearby(first, radius_m=radius):
+                if first.actor_id == second.actor_id:
+                    continue
+                pair = (
+                    min(first.actor_id, second.actor_id),
+                    max(first.actor_id, second.actor_id),
+                )
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
                 risk = self.evaluate_pair(first, second, detected_at=detected_at)
                 if risk is not None:
                     risks.append(risk)
