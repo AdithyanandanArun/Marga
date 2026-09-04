@@ -1,80 +1,193 @@
-"""In-memory world-state store with REST snapshot, WebSocket streaming, and rerouting."""
+"""Canonical live world state, ingestion endpoints, and WebSocket deltas."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import math
-import uuid
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
+from packages.schemas.canonical import Hazard, HazardState, HazardType, PedestrianState, VehicleState
+from packages.schemas.hazards import HazardObservation
 from services.integration.canonical_bridge import vehicle_from_adapter_event
+from services.position import PositionFusionService, predict_trajectory
+from services.risk import RiskEngine
+
+from .incidents import incident_traces
 
 logger = logging.getLogger("marga.gateway.world_state")
+router = APIRouter(tags=["world-state"])
 
-router = APIRouter(prefix="/v1/world-state", tags=["world-state"])
-
-# actor_id → serialized VehicleState dict
-_store: dict[str, dict[str, Any]] = {}
-# Each connected WebSocket gets its own Queue; we push snapshots into it.
+EntityType = Literal["vehicle", "pedestrian", "hazard", "risk"]
+_entities: dict[tuple[EntityType, str], dict[str, Any]] = {}
 _subscribers: list[asyncio.Queue[dict[str, Any]]] = []
+_position_fusion = PositionFusionService()
+_risk_engine = RiskEngine()
 
 
-def _snapshot() -> dict[str, Any]:
-    return {"actors": list(_store.values())}
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
 
 
-def _notify_all(snap: dict[str, Any]) -> None:
-    for q in _subscribers:
+def _entity(entity_type: EntityType, entity_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    return {"entity_type": entity_type, "entity_id": entity_id, "data": data}
+
+
+def _entities_as_list(entity_type: EntityType | None = None) -> list[dict[str, Any]]:
+    return [
+        _entity(kind, entity_id, data)
+        for (kind, entity_id), data in _entities.items()
+        if entity_type is None or kind == entity_type
+    ]
+
+
+def _world_delta(
+    kind: Literal["snapshot", "delta"],
+    upserts: list[dict[str, Any]],
+    deletes: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"kind": kind, "server_time": _now(), "upserts": upserts, "deletes": deletes or []}
+    # Existing dashboard revisions expect this legacy field. New clients use
+    # the canonical upserts/deletes contract above.
+    payload["actors"] = [item["data"] for item in _entities_as_list("vehicle")]
+    return payload
+
+
+def _snapshot_delta() -> dict[str, Any]:
+    return _world_delta("snapshot", _entities_as_list())
+
+
+def _legacy_snapshot() -> dict[str, Any]:
+    return {
+        "actors": [item["data"] for item in _entities_as_list("vehicle")],
+        "pedestrians": [item["data"] for item in _entities_as_list("pedestrian")],
+        "hazards": [item["data"] for item in _entities_as_list("hazard")],
+        "risks": [item["data"] for item in _entities_as_list("risk")],
+    }
+
+
+def _notify(delta: dict[str, Any]) -> None:
+    for queue in tuple(_subscribers):
         try:
-            q.put_nowait(snap)
+            queue.put_nowait(delta)
         except asyncio.QueueFull:
-            pass  # slow consumer — drop rather than block
+            logger.warning("dropping world delta for slow WebSocket client")
 
 
-# ---------------------------------------------------------------------------
-# Public helpers (used by runner or other services)
-# ---------------------------------------------------------------------------
+def _store_model(entity_type: EntityType, entity_id: str, model: BaseModel) -> dict[str, Any]:
+    data = model.model_dump(mode="json")
+    _entities[(entity_type, entity_id)] = data
+    return _entity(entity_type, entity_id, data)
 
 
-async def ingest_events(events: list[Any]) -> dict[str, int]:
-    """Bridge adapter events → canonical VehicleState → update the store."""
-    updated = errors = 0
-    for event in events:
-        try:
-            vs = vehicle_from_adapter_event(event)
-            _store[vs.actor_id] = vs.model_dump(mode="json")
-            updated += 1
-        except Exception as exc:
-            logger.debug("Skipping event: %s", exc)
-            errors += 1
-    if updated:
-        _notify_all(_snapshot())
-    return {"updated": updated, "errors": errors, "total_actors": len(_store)}
+def _vehicle_states() -> list[VehicleState]:
+    return [VehicleState.model_validate(data) for (kind, _), data in _entities.items() if kind == "vehicle"]
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+def _refresh_risks() -> list[dict[str, Any]]:
+    upserts: list[dict[str, Any]] = []
+    for risk in _risk_engine.evaluate_all(_vehicle_states()):
+        incident_traces.record_risk(risk)
+        upserts.append(_store_model("risk", risk.risk_id, risk))
+    return upserts
+
+
+async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
+    prior_data = _entities.get(("vehicle", state.actor_id))
+    prior = VehicleState.model_validate(prior_data) if prior_data else None
+    fused = _position_fusion.fuse_with_previous(prior, state)
+    upserts = [_store_model("vehicle", fused.actor_id, fused)]
+    upserts.extend(_refresh_risks())
+    _notify(_world_delta("delta", upserts))
+    return {
+        "entity": upserts[0],
+        "trajectory": predict_trajectory(fused).model_dump(mode="json"),
+        "risk_count": len(upserts) - 1,
+    }
+
+
+async def ingest_pedestrian_state(state: PedestrianState) -> dict[str, Any]:
+    entity = _store_model("pedestrian", state.actor_id, state)
+    _notify(_world_delta("delta", [entity]))
+    return {"entity": entity}
+
+
+async def ingest_hazard_observation(observation: HazardObservation) -> dict[str, Any]:
+    try:
+        hazard_type = HazardType(observation.hazard_type.upper())
+    except ValueError:
+        hazard_type = HazardType.OTHER
+    ttl_s = (
+        max(1, int((observation.expires_at - observation.timestamp_utc).total_seconds()))
+        if observation.expires_at
+        else 300
+    )
+    hazard = Hazard(
+        hazard_id=observation.hazard_id,
+        type=hazard_type,
+        geometry={"type": "Point", "coordinates": [observation.position.lon, observation.position.lat]},
+        severity=float(observation.evidence.get("severity", 0.5)),
+        confidence=observation.confidence,
+        first_seen=observation.timestamp_utc,
+        last_seen=observation.timestamp_utc,
+        ttl_s=ttl_s,
+        source_ids=[observation.reporting_source, *observation.corroborating_sources],
+        evidence_count=1 + len(observation.corroborating_sources),
+        state=HazardState.CANDIDATE,
+    )
+    entity = _store_model("hazard", hazard.hazard_id, hazard)
+    _notify(_world_delta("delta", [entity]))
+    return {"entity": entity}
 
 
 class IngestRequest(BaseModel):
     events: list[Any]
 
 
-@router.post("/ingest")
-async def ingest(req: IngestRequest) -> dict[str, int]:
-    """Accept adapter-shaped events and update the live world-state store."""
-    return await ingest_events(req.events)
+@router.post("/v1/world-state/ingest")
+async def ingest_legacy(req: IngestRequest) -> dict[str, int]:
+    """Compatibility bridge for adapter envelopes; new callers use /v1/ingest."""
+    updated = errors = 0
+    for event in req.events:
+        try:
+            await ingest_vehicle_state(vehicle_from_adapter_event(event))
+            updated += 1
+        except Exception as exc:
+            logger.debug("skipping invalid adapter event: %s", exc)
+            errors += 1
+    return {"updated": updated, "errors": errors, "total_actors": len(_vehicle_states())}
 
 
-@router.get("/snapshot")
+@router.post("/v1/ingest/vehicle-state", status_code=202)
+async def ingest_vehicle(state: VehicleState) -> dict[str, Any]:
+    return await ingest_vehicle_state(state)
+
+
+@router.post("/v1/ingest/pedestrian-state", status_code=202)
+async def ingest_pedestrian(state: PedestrianState) -> dict[str, Any]:
+    return await ingest_pedestrian_state(state)
+
+
+@router.post("/v1/ingest/hazard-observation", status_code=202)
+async def ingest_hazard(observation: HazardObservation) -> dict[str, Any]:
+    return await ingest_hazard_observation(observation)
+
+
+@router.get("/v1/world-state/snapshot")
 async def snapshot() -> dict[str, Any]:
-    """Return the current actor snapshot (pull-based alternative to the WebSocket)."""
-    return _snapshot()
+    return _legacy_snapshot()
+
+
+@router.get("/v1/incidents/{incident_id}/trace")
+async def incident_trace(incident_id: str) -> dict[str, Any]:
+    trace = incident_traces.get(incident_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="incident trace not found")
+    return trace
 
 
 class GeoPoint(BaseModel):
@@ -86,7 +199,7 @@ class RerouteRequest(BaseModel):
     actor_id: str
     origin: GeoPoint
     destination: GeoPoint
-    avoid_segment_ids: list[str] = []
+    avoid_segment_ids: list[str] = Field(default_factory=list)
 
 
 class RerouteResponse(BaseModel):
@@ -98,100 +211,60 @@ class RerouteResponse(BaseModel):
 
 
 def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Initial bearing in degrees from point 1 to point 2."""
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dlam = math.radians(lon2 - lon1)
-    x = math.sin(dlam) * math.cos(phi2)
-    y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlam)
-    return (math.degrees(math.atan2(x, y)) + 360) % 360
+    phi1, phi2, dlon = math.radians(lat1), math.radians(lat2), math.radians(lon2 - lon1)
+    numerator = math.sin(dlon) * math.cos(phi2)
+    denominator = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlon)
+    return (math.degrees(math.atan2(numerator, denominator)) + 360) % 360
 
 
-def _offset_point(lat: float, lon: float, bearing_deg: float, dist_m: float) -> tuple[float, float]:
-    """Move a point dist_m metres along bearing_deg and return (lat, lon)."""
-    r = 6_371_000.0
-    d = dist_m / r
-    b = math.radians(bearing_deg)
-    phi1 = math.radians(lat)
-    lam1 = math.radians(lon)
-    phi2 = math.asin(math.sin(phi1) * math.cos(d) + math.cos(phi1) * math.sin(d) * math.cos(b))
-    lam2 = lam1 + math.atan2(math.sin(b) * math.sin(d) * math.cos(phi1), math.cos(d) - math.sin(phi1) * math.sin(phi2))
-    return (math.degrees(phi2), math.degrees(lam2))
+def _offset_point(lat: float, lon: float, bearing_deg: float, distance_m: float) -> tuple[float, float]:
+    angular_distance, bearing = distance_m / 6_371_000.0, math.radians(bearing_deg)
+    phi, lam = math.radians(lat), math.radians(lon)
+    target_lat = math.asin(
+        math.sin(phi) * math.cos(angular_distance) + math.cos(phi) * math.sin(angular_distance) * math.cos(bearing)
+    )
+    target_lon = lam + math.atan2(
+        math.sin(bearing) * math.sin(angular_distance) * math.cos(phi),
+        math.cos(angular_distance) - math.sin(phi) * math.sin(target_lat),
+    )
+    return math.degrees(target_lat), math.degrees(target_lon)
 
 
-@router.post("/reroute", response_model=RerouteResponse)
+@router.post("/v1/world-state/reroute", response_model=RerouteResponse)
 async def reroute(req: RerouteRequest) -> RerouteResponse:
-    """Suggest a two-waypoint detour avoiding active road events.
-
-    The detour adds one perpendicular waypoint at the midpoint between origin
-    and destination, offset laterally by ~150 m. This keeps the route
-    realistic for city-scale avoidance (road closure, narrowing, hazard).
-
-    Returns resolved_alert_ids — alerts for this actor that the frontend
-    should dismiss after the driver accepts the reroute.
-    """
-    o, d = req.origin, req.destination
-    direct_bearing = _bearing(o.lat, o.lon, d.lat, d.lon)
-    mid_lat = (o.lat + d.lat) / 2
-    mid_lon = (o.lon + d.lon) / 2
-
-    # Perpendicular offset: 90° clockwise from direct bearing
-    perp_bearing = (direct_bearing + 90) % 360
-    detour_lat, detour_lon = _offset_point(mid_lat, mid_lon, perp_bearing, 150.0)
-
-    route = [
-        GeoPoint(lat=o.lat, lon=o.lon),
-        GeoPoint(lat=detour_lat, lon=detour_lon),
-        GeoPoint(lat=d.lat, lon=d.lon),
-    ]
-
-    # Extra distance vs. straight line ≈ two legs of a right triangle
-    straight_m = math.sqrt((detour_lat - o.lat) ** 2 + (detour_lon - o.lon) ** 2) * 111_320
-    extra_m = straight_m * 0.15   # rough 15 % overhead for the detour bend
-    estimated_delay_s = extra_m / 8.0  # assume 8 m/s (city average)
-
-    reason = "road_closure" if not req.avoid_segment_ids else f"segments:{','.join(req.avoid_segment_ids[:3])}"
-
-    # Find alerts in the store that reference this actor so the frontend can
-    # dismiss them — resolved_alert_ids are returned for client-side cleanup.
-    # A full implementation would PATCH the alerts service; for now we surface
-    # the actor_id so the AlertPanel can filter by it.
-    resolved_alert_ids: list[str] = []
-
-    logger.info(
-        "Reroute accepted: actor=%s reason=%s delay=%.1fs",
-        req.actor_id, reason, estimated_delay_s,
+    bearing = _bearing(req.origin.lat, req.origin.lon, req.destination.lat, req.destination.lon)
+    lat, lon = _offset_point(
+        (req.origin.lat + req.destination.lat) / 2,
+        (req.origin.lon + req.destination.lon) / 2,
+        (bearing + 90) % 360,
+        150,
     )
     return RerouteResponse(
         actor_id=req.actor_id,
-        route_geometry=route,
-        avoidance_reason=reason,
-        estimated_delay_s=estimated_delay_s,
-        resolved_alert_ids=resolved_alert_ids,
+        route_geometry=[req.origin, GeoPoint(lat=lat, lon=lon), req.destination],
+        avoidance_reason=(
+            "road_closure" if not req.avoid_segment_ids else f"segments:{','.join(req.avoid_segment_ids[:3])}"
+        ),
+        estimated_delay_s=20.0,
+        resolved_alert_ids=[],
     )
 
 
-@router.websocket("/stream")
+@router.websocket("/v1/world-state/stream")
 async def stream(ws: WebSocket) -> None:
-    """Push-based world-state stream.
-
-    Sends the full actor snapshot immediately on connect, then pushes
-    a fresh snapshot after every ingest that changes any actor state.
-    """
+    """Emit WorldDelta snapshots/deltas that the dashboard store can apply."""
     await ws.accept()
-    q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
-    _subscribers.append(q)
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
+    _subscribers.append(queue)
     try:
-        await ws.send_json(_snapshot())
+        await ws.send_json(_snapshot_delta())
         while True:
             try:
-                msg = await asyncio.wait_for(q.get(), timeout=30.0)
-                await ws.send_json(msg)
-            except asyncio.TimeoutError:
-                await ws.send_json({"ping": True})
+                await ws.send_json(await asyncio.wait_for(queue.get(), timeout=30.0))
+            except TimeoutError:
+                await ws.send_json({"kind": "delta", "server_time": _now(), "upserts": [], "deletes": [], "ping": True})
     except WebSocketDisconnect:
         pass
     finally:
-        try:
-            _subscribers.remove(q)
-        except ValueError:
-            pass
+        if queue in _subscribers:
+            _subscribers.remove(queue)

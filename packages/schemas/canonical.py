@@ -74,6 +74,8 @@ class HazardState(str, enum.Enum):
 
 class RiskType(str, enum.Enum):
     COLLISION = "COLLISION"
+    REAR_END = "REAR_END"
+    HEAD_ON = "HEAD_ON"
     INTERSECTION_CONFLICT = "INTERSECTION_CONFLICT"
     BLIND_CURVE = "BLIND_CURVE"
     BLIND_INTERSECTION = "BLIND_INTERSECTION"

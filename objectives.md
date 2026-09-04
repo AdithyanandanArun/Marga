@@ -10,7 +10,10 @@ Items marked ✅ are done. Everything below is not yet implemented.
 Owner: **Adithyan — Agent 1** (world state, geospatial/position core, trajectories, collision risk, evidence)
 
 ### 1.1 World-state WebSocket emits wrong format
-**Status: broken.** The frontend (`worldStream.ts`) expects `WorldDelta` messages:
+**Status: ✅ implemented.** The gateway stream emits `WorldDelta` messages with
+`kind`, `server_time`, `upserts`, and `deletes`; the existing `actors` field is
+retained only as a compatibility field for older clients. The frontend store can
+now apply snapshots and incremental entity updates.
 ```json
 { "kind": "snapshot", "server_time": "...", "upserts": [...], "deletes": [] }
 ```
@@ -19,6 +22,11 @@ The backend (`/v1/world-state/stream`) sends `{"actors": [...]}`. The frontend s
 proper `WorldDelta`-shaped payloads keyed by `entity_type` and `entity_id`.
 
 ### 1.2 Canonical ingestion gateway endpoints missing
+**Status: ✅ implemented.** The gateway exposes the documented canonical paths:
+`POST /v1/ingest/vehicle-state`, `POST /v1/ingest/pedestrian-state`, and
+`POST /v1/ingest/hazard-observation`. They update world state and publish a
+canonical delta. The legacy adapter-envelope endpoint remains supported.
+
 README promises:
 ```
 POST /v1/ingest/vehicle-state
@@ -29,6 +37,12 @@ None exist on the gateway. Currently the only ingest path is `POST /v1/world-sta
 (our interim endpoint). Real adapters and the frontend need the canonical paths.
 
 ### 1.3 Trajectory prediction and TTC collision risk — not built
+**Status: ✅ implemented.** `services/position/` predicts conservative
+constant-acceleration trajectories with growing uncertainty. `services/risk/`
+evaluates pairwise constant-velocity TTC in a local metric frame, emits
+`REAR_END`, `HEAD_ON`, or `INTERSECTION_CONFLICT` `RiskEvent`s, and exposes
+them as `risk` world-state entities.
+
 README roadmap item 4: *"Build generic trajectory and time-to-collision risk detection."*
 - No trajectory extrapolation service exists.
 - The frontend `showTrajectories` toggle has no data to render.
@@ -37,12 +51,21 @@ README roadmap item 4: *"Build generic trajectory and time-to-collision risk det
 - Need: `services/position/` trajectory engine; expose conflict events as `risk.detected`.
 
 ### 1.4 Incident trace endpoint missing
+**Status: ✅ implemented.** Each TTC risk is retained with its inputs, derived
+metrics, evidence, and policy version. Retrieve it through
+`GET /v1/incidents/{id}/trace`, where the incident ID is the risk ID.
+
 README API: `GET /v1/incidents/{id}/trace`
 No endpoint exists. Alerts are currently in-memory only. When an alert fires, the
 contributing `RiskEvent` evidence is not persisted with a trace ID. Needed for:
 explainability, replay, and the build manual's "Explainable decisions" hard rule.
 
 ### 1.5 Position uncertainty fusion service missing
+**Status: ✅ implemented.** `PositionFusionService` inverse-variance fuses
+same-actor canonical observations and carries the resulting uncertainty into
+trajectory confidence and TTC-risk confidence. Prediction uncertainty grows
+over time rather than fabricating precision during degraded positioning.
+
 `services/position/` does not exist. Position uncertainty is passed through from SUMO
 as a raw number but never fused from multiple sources (GNSS + RSU range + speed).
 Offline-first requirement: when GPS degrades, uncertainty must propagate into every
