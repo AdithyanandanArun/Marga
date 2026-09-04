@@ -8,7 +8,7 @@ plain strings — the migration and production path always targets PostGIS.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
@@ -30,7 +30,7 @@ from sqlalchemy.types import TypeDecorator
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PointGeometry(TypeDecorator):
@@ -90,7 +90,7 @@ class HazardRow(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
     )
 
-    observations: Mapped[list["HazardObservationRow"]] = relationship(back_populates="hazard", lazy="selectin")
+    observations: Mapped[list[HazardObservationRow]] = relationship(back_populates="hazard", lazy="selectin")
 
 
 class HazardObservationRow(Base):

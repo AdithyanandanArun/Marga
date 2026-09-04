@@ -6,7 +6,7 @@ import logging
 import math
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from marga_schemas.common import ActorType
 
@@ -100,7 +100,7 @@ class PlausibilityChecker:
 
         # Ensure timestamp is offset-aware (assume UTC if naive).
         if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
+            timestamp = timestamp.replace(tzinfo=UTC)
 
         # --- Speed sanity (independent of history) ---
         max_speed = _MAX_SPEED.get(actor_type, _MAX_SPEED[ActorType.OTHER])
@@ -117,7 +117,7 @@ class PlausibilityChecker:
             prev = self._state.get(actor_id)
 
             if prev is not None:
-                prev_ts = prev.timestamp if prev.timestamp.tzinfo else prev.timestamp.replace(tzinfo=timezone.utc)
+                prev_ts = prev.timestamp if prev.timestamp.tzinfo else prev.timestamp.replace(tzinfo=UTC)
 
                 dt = (timestamp - prev_ts).total_seconds()
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from marga_schemas.common import ConnectivityState
 from marga_schemas.messaging import LinkState
@@ -64,7 +64,7 @@ class ConnectivityMonitor:
             self._route_windows[route].append(success)
 
             if success:
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 if route == "cloud":
                     self._last_cloud_contact = now
                 elif route == "direct":

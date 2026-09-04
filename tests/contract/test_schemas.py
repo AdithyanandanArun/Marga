@@ -9,7 +9,7 @@ Every canonical schema must:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -30,7 +30,7 @@ from pydantic import ValidationError
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
-NOW = datetime.now(tz=timezone.utc)
+NOW = datetime.now(tz=UTC)
 
 
 def _vehicle_state_data() -> dict:

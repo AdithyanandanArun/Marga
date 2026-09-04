@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -31,7 +31,7 @@ _TRANSITIONS: dict[AlertState, set[AlertState]] = {
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -123,7 +123,7 @@ class AlertLifecycleManager:
                 continue
             if alert.expires_at is not None:
                 exp = (
-                    alert.expires_at.replace(tzinfo=timezone.utc)
+                    alert.expires_at.replace(tzinfo=UTC)
                     if alert.expires_at.tzinfo is None
                     else alert.expires_at
                 )
@@ -134,7 +134,7 @@ class AlertLifecycleManager:
                     expired_ids.append(alert.alert_id)
             elif alert.ttl_s is not None:
                 created = (
-                    alert.created_at.replace(tzinfo=timezone.utc)
+                    alert.created_at.replace(tzinfo=UTC)
                     if alert.created_at.tzinfo is None
                     else alert.created_at
                 )

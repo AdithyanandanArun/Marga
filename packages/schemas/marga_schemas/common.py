@@ -19,7 +19,7 @@ class GeoPoint(BaseModel):
     altitude_m: float | None = None
 
 
-class Source(str, enum.Enum):
+class Source(enum.StrEnum):
     SIMULATION = "SIMULATION"
     PHONE = "PHONE"
     OBU = "OBU"
@@ -30,7 +30,7 @@ class Source(str, enum.Enum):
     OPERATOR = "OPERATOR"
 
 
-class ActorType(str, enum.Enum):
+class ActorType(enum.StrEnum):
     CAR = "CAR"
     BIKE = "BIKE"
     AUTO = "AUTO"
@@ -42,7 +42,7 @@ class ActorType(str, enum.Enum):
     OTHER = "OTHER"
 
 
-class PositionMethod(str, enum.Enum):
+class PositionMethod(enum.StrEnum):
     GNSS = "GNSS"
     FUSED = "FUSED"
     DEAD_RECKONED = "DEAD_RECKONED"
@@ -50,7 +50,7 @@ class PositionMethod(str, enum.Enum):
     PEER_AIDED = "PEER_AIDED"
 
 
-class ConnectivityState(str, enum.Enum):
+class ConnectivityState(enum.StrEnum):
     FULL = "FULL"
     DIRECT_ONLY = "DIRECT_ONLY"
     INTERMITTENT = "INTERMITTENT"

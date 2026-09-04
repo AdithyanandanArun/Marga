@@ -46,7 +46,7 @@ class HazardSpatialIndex:
     def __init__(self, cell_size_deg: float = DEFAULT_CELL_SIZE_DEG) -> None:
         self._cell_size = cell_size_deg
         # grid_key -> {hazard_id: Hazard}
-        self._grid: dict[tuple[int, int], dict[str, "Hazard"]] = {}
+        self._grid: dict[tuple[int, int], dict[str, Hazard]] = {}
         # hazard_id -> grid_key (for O(1) removal)
         self._id_to_key: dict[str, tuple[int, int]] = {}
 
@@ -54,7 +54,7 @@ class HazardSpatialIndex:
     # Public API
     # ------------------------------------------------------------------
 
-    def insert(self, hazard: "Hazard") -> None:
+    def insert(self, hazard: Hazard) -> None:
         """Insert or update a hazard in the index."""
         hid = str(hazard.hazard_id)
         # Remove old entry if position changed
@@ -72,8 +72,8 @@ class HazardSpatialIndex:
         self,
         position: GeoPoint,
         radius_m: float,
-        hazard_type: "HazardType | None" = None,
-    ) -> list["Hazard"]:
+        hazard_type: HazardType | None = None,
+    ) -> list[Hazard]:
         """Return all hazards within *radius_m* metres of *position*.
 
         Optionally filter by hazard type.
@@ -85,7 +85,7 @@ class HazardSpatialIndex:
         cell_span = max(1, int(math.ceil(radius_deg / self._cell_size)))
         center_key = _grid_key(position.lat, position.lon, self._cell_size)
 
-        results: list["Hazard"] = []
+        results: list[Hazard] = []
         for di in range(-cell_span, cell_span + 1):
             for dj in range(-cell_span, cell_span + 1):
                 cell = self._grid.get((center_key[0] + di, center_key[1] + dj))

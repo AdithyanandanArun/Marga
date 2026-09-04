@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -187,14 +187,14 @@ class TestAlertLifecycleManager:
         mgr = AlertLifecycleManager()
         alert = _make_alert(ttl_s=0)
         # Manually set created_at in the past
-        alert = alert.model_copy(update={"created_at": datetime.now(timezone.utc) - timedelta(seconds=5)})
+        alert = alert.model_copy(update={"created_at": datetime.now(UTC) - timedelta(seconds=5)})
         created = mgr.create_alert(alert)
         expired = mgr.expire_stale()
         assert created.alert_id in expired
 
     def test_expire_stale_via_expires_at(self):
         mgr = AlertLifecycleManager()
-        past = datetime.now(timezone.utc) - timedelta(seconds=5)
+        past = datetime.now(UTC) - timedelta(seconds=5)
         alert = _make_alert(expires_at=past)
         created = mgr.create_alert(alert)
         expired = mgr.expire_stale()

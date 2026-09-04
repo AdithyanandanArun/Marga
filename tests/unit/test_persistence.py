@@ -8,7 +8,7 @@ with plain strings since SQLite has no spatial extension.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -85,8 +85,8 @@ class TestModels:
             position="POINT(77.5946 12.9716)",
             severity=0.7,
             confidence=0.8,
-            first_seen=datetime.now(timezone.utc),
-            last_seen=datetime.now(timezone.utc),
+            first_seen=datetime.now(UTC),
+            last_seen=datetime.now(UTC),
             ttl_s=300,
         )
         assert row.hazard_id is not None
@@ -109,7 +109,7 @@ class TestModels:
             source_id="sim-001",
             detector_confidence=0.85,
             severity_hint=0.6,
-            observed_at=datetime.now(timezone.utc),
+            observed_at=datetime.now(UTC),
         )
         assert row.observation_id is not None
 
@@ -125,7 +125,7 @@ class TestModels:
         row = TrustEventRow(
             sender_id="node-42",
             event_type="REPLAY_REJECTED",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         assert row.event_id is not None
 
@@ -133,7 +133,7 @@ class TestModels:
         row = SystemAuditEventRow(
             event_type="SERVICE_START",
             source_service="risk-engine",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             trace_id="abc-123",
         )
         assert row.event_id is not None
@@ -148,7 +148,7 @@ class TestHazardRepository:
     @pytest.mark.asyncio
     async def test_save_and_get_hazard(self, session):
         repo = HazardRepository(session)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         hazard = HazardRow(
             hazard_type="DEBRIS",
             position="POINT(77.5946 12.9716)",
@@ -169,7 +169,7 @@ class TestHazardRepository:
     @pytest.mark.asyncio
     async def test_list_hazards_filter_by_state(self, session):
         repo = HazardRepository(session)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for state in ("CANDIDATE", "VERIFIED", "CANDIDATE"):
             h = HazardRow(
                 hazard_type="POTHOLE",
@@ -193,7 +193,7 @@ class TestHazardRepository:
     @pytest.mark.asyncio
     async def test_update_hazard(self, session):
         repo = HazardRepository(session)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         hazard = HazardRow(
             hazard_type="FLOOD",
             position="POINT(77.0 13.0)",
@@ -219,7 +219,7 @@ class TestHazardRepository:
     @pytest.mark.asyncio
     async def test_save_and_get_observations(self, session):
         repo = HazardRepository(session)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         hazard = HazardRow(
             hazard_type="STALLED_VEHICLE",
             position="POINT(77.0 13.0)",
@@ -321,7 +321,7 @@ class TestAuditRepository:
     @pytest.mark.asyncio
     async def test_log_and_query_events(self, session):
         repo = AuditRepository(session)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         evt = SystemAuditEventRow(
             event_type="ALERT_ISSUED",
             source_service="alert-service",
@@ -339,7 +339,7 @@ class TestAuditRepository:
     @pytest.mark.asyncio
     async def test_query_by_trace_id(self, session):
         repo = AuditRepository(session)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(3):
             evt = SystemAuditEventRow(
                 event_type=f"EVENT_{i}",
@@ -356,7 +356,7 @@ class TestAuditRepository:
     @pytest.mark.asyncio
     async def test_query_with_limit(self, session):
         repo = AuditRepository(session)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for _ in range(10):
             evt = SystemAuditEventRow(
                 event_type="BULK",

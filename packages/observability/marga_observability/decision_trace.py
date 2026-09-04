@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import collections
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine
+from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 
@@ -49,7 +50,7 @@ class DecisionTrace:
     """
 
     decision_id: UUID = field(default_factory=uuid4)
-    ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    ts: datetime = field(default_factory=lambda: datetime.now(UTC))
     decision_type: str = ""
     inputs: list[DecisionInput] = field(default_factory=list)
     derived_metrics: dict[str, Any] = field(default_factory=dict)

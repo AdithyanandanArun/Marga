@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
@@ -80,7 +80,7 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="ok",
         active_hazards=len(_engine.hazards),
-        utc_now=datetime.now(timezone.utc).isoformat(),
+        utc_now=datetime.now(UTC).isoformat(),
     )
 
 

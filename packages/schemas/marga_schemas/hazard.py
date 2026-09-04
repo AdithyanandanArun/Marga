@@ -11,7 +11,7 @@ from marga_schemas.common import GeoPoint, SchemaVersioned
 from pydantic import Field
 
 
-class HazardType(str, enum.Enum):
+class HazardType(enum.StrEnum):
     POTHOLE = "POTHOLE"
     BUMP = "BUMP"
     DEBRIS = "DEBRIS"
@@ -26,7 +26,7 @@ class HazardType(str, enum.Enum):
     OTHER = "OTHER"
 
 
-class HazardState(str, enum.Enum):
+class HazardState(enum.StrEnum):
     CANDIDATE = "CANDIDATE"
     VERIFIED = "VERIFIED"
     STALE = "STALE"

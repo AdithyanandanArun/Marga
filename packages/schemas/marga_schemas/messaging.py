@@ -11,14 +11,14 @@ from marga_schemas.common import ConnectivityState, GeoPoint, SchemaVersioned
 from pydantic import BaseModel, Field
 
 
-class MessagePriority(str, enum.Enum):
+class MessagePriority(enum.StrEnum):
     CRITICAL_SAFETY = "CRITICAL_SAFETY"
     REGIONAL_SAFETY = "REGIONAL_SAFETY"
     OPERATIONAL = "OPERATIONAL"
     ANALYTICS = "ANALYTICS"
 
 
-class QueueClass(str, enum.Enum):
+class QueueClass(enum.StrEnum):
     CRITICAL_LOCAL = "CRITICAL_LOCAL"
     REGIONAL_SAFETY = "REGIONAL_SAFETY"
     ANALYTICS = "ANALYTICS"
