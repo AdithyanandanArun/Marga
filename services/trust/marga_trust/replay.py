@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class ReplayCache:
 
         Returns ``(accepted, reason)`` — *reason* is empty on acceptance.
         """
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
 
         # 1. Expired message?
         if expires_at <= now_utc:

@@ -9,7 +9,7 @@ manager runs periodic sweeps to transition hazards through:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from marga_schemas.hazard import Hazard, HazardState, HazardType
 
@@ -72,7 +72,7 @@ class HazardLifecycleManager:
 
     def sweep(self, now: datetime | None = None) -> list[Hazard]:
         """Run one lifecycle sweep.  Returns list of hazards whose state changed."""
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         changed: list[Hazard] = []
         to_remove: list[str] = []
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -56,7 +56,7 @@ class HazardRepository:
         return list(result.scalars().all())
 
     async def update_hazard(self, hazard: HazardRow) -> HazardRow:
-        hazard.updated_at = datetime.now(timezone.utc)
+        hazard.updated_at = datetime.now(UTC)
         merged = await self._session.merge(hazard)
         await self._session.flush()
         return merged
@@ -110,7 +110,7 @@ class AlertRepository:
         return list(result.scalars().all())
 
     async def update_alert(self, alert: AlertRow) -> AlertRow:
-        alert.updated_at = datetime.now(timezone.utc)
+        alert.updated_at = datetime.now(UTC)
         merged = await self._session.merge(alert)
         await self._session.flush()
         return merged

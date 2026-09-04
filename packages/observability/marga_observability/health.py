@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
-class HealthStatus(str, enum.Enum):
+class HealthStatus(enum.StrEnum):
     UP = "UP"
     DOWN = "DOWN"
     DEGRADED = "DEGRADED"

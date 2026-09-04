@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from marga_schemas.trust import TrustLevel
 
@@ -24,7 +24,7 @@ class CredentialRecord:
     def is_expired(self) -> bool:
         if self.expires_at is None:
             return False
-        return datetime.now(timezone.utc) >= self.expires_at
+        return datetime.now(UTC) >= self.expires_at
 
 
 class CredentialVerifier:
@@ -66,7 +66,7 @@ class CredentialVerifier:
             if expires_raw is not None:
                 expires_at = datetime.fromisoformat(expires_raw)
                 if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                    expires_at = expires_at.replace(tzinfo=UTC)
 
             record = CredentialRecord(
                 sender_id=entry["sender_id"],

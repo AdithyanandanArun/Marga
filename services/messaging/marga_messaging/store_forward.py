@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from marga_schemas.common import ConnectivityState
@@ -63,18 +63,18 @@ class StoreForwardManager:
         Returns the StoreForwardEntry (new or updated).
         """
         dedup_key = (message.message_id, message.schema_version)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Check for duplicate.
         existing_entry_id = self._seen.get(dedup_key)
         if existing_entry_id is not None and existing_entry_id in self._entries:
             existing = self._entries[existing_entry_id]
             incoming_ts = (
-                message.timestamp if message.timestamp.tzinfo else message.timestamp.replace(tzinfo=timezone.utc)
+                message.timestamp if message.timestamp.tzinfo else message.timestamp.replace(tzinfo=UTC)
             )
             existing_ts = existing.message.timestamp
             if existing_ts.tzinfo is None:
-                existing_ts = existing_ts.replace(tzinfo=timezone.utc)
+                existing_ts = existing_ts.replace(tzinfo=UTC)
 
             if incoming_ts > existing_ts:
                 # Update with newer version.
@@ -103,7 +103,7 @@ class StoreForwardManager:
         Eligible messages are removed from the store. CRITICAL_LOCAL messages
         are always eligible (delivered immediately, never queued behind cloud sync).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         eligible: list[V2XMessage] = []
         to_remove: list[UUID] = []
 
@@ -122,7 +122,7 @@ class StoreForwardManager:
         for entry in sorted_entries:
             # Check TTL expiration.
             msg = entry.message
-            ts = msg.timestamp if msg.timestamp.tzinfo else msg.timestamp.replace(tzinfo=timezone.utc)
+            ts = msg.timestamp if msg.timestamp.tzinfo else msg.timestamp.replace(tzinfo=UTC)
             if (now - ts).total_seconds() > msg.ttl_s:
                 to_remove.append(entry.entry_id)
                 self._total_expired += 1
@@ -146,12 +146,12 @@ class StoreForwardManager:
 
     def cleanup(self) -> int:
         """Remove entries whose TTL has passed. Returns count removed."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired: list[UUID] = []
 
         for entry_id, entry in self._entries.items():
             msg = entry.message
-            ts = msg.timestamp if msg.timestamp.tzinfo else msg.timestamp.replace(tzinfo=timezone.utc)
+            ts = msg.timestamp if msg.timestamp.tzinfo else msg.timestamp.replace(tzinfo=UTC)
             if (now - ts).total_seconds() > msg.ttl_s:
                 expired.append(entry_id)
 

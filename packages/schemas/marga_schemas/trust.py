@@ -11,7 +11,7 @@ from marga_schemas.common import SchemaVersioned
 from pydantic import Field
 
 
-class TrustLevel(str, enum.Enum):
+class TrustLevel(enum.StrEnum):
     UNTRUSTED = "UNTRUSTED"
     LOW = "LOW"
     MEDIUM = "MEDIUM"

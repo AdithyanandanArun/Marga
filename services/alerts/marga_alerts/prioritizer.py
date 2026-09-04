@@ -8,7 +8,7 @@ weights are fully configurable at construction time.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from marga_schemas.alert import Alert, AlertPriority
 
@@ -117,7 +117,7 @@ class AlertPrioritizer:
     @staticmethod
     def _message_age_score(alert: Alert) -> float:
         """Newer alerts score higher.  Alerts older than 60 s score 0."""
-        age_s = (datetime.now(timezone.utc) - alert.created_at.replace(tzinfo=timezone.utc)).total_seconds()
+        age_s = (datetime.now(UTC) - alert.created_at.replace(tzinfo=UTC)).total_seconds()
         if age_s <= 0:
             return 1.0
         if age_s >= 60:

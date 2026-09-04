@@ -11,7 +11,7 @@ from marga_schemas.common import EvidenceItem, GeoPoint, SchemaVersioned
 from pydantic import Field
 
 
-class AlertPriority(str, enum.Enum):
+class AlertPriority(enum.StrEnum):
     CRITICAL = "CRITICAL"
     HIGH = "HIGH"
     MEDIUM = "MEDIUM"
@@ -19,7 +19,7 @@ class AlertPriority(str, enum.Enum):
     INFO = "INFO"
 
 
-class AlertState(str, enum.Enum):
+class AlertState(enum.StrEnum):
     ACTIVE = "ACTIVE"
     ACKNOWLEDGED = "ACKNOWLEDGED"
     RESOLVED = "RESOLVED"

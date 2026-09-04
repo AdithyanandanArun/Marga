@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -17,7 +17,7 @@ from services.hazards.marga_hazards.spatial import HazardSpatialIndex, haversine
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
-_NOW = datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
 
 # A point in central Bangalore (~12.97, 77.59)
 _POS_A = GeoPoint(lat=12.9716, lon=77.5946)

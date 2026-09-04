@@ -9,7 +9,7 @@ Pipeline stages:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from marga_schemas.common import ActorType
@@ -59,7 +59,7 @@ class TrustValidator:
         the remaining stages.
         """
         sender = message.sender_pseudonym
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         reasons: list[str] = []
         trust_level = TrustLevel.UNTRUSTED
         credential_verified = False
@@ -170,9 +170,9 @@ class TrustValidator:
         issued = message.issued_at
         expires = message.expires_at
         if issued.tzinfo is None:
-            issued = issued.replace(tzinfo=timezone.utc)
+            issued = issued.replace(tzinfo=UTC)
         if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
+            expires = expires.replace(tzinfo=UTC)
 
         if expires <= now:
             return "MESSAGE_EXPIRED"
@@ -259,7 +259,7 @@ class TrustValidator:
         event = TrustEvent(
             sender_id=sender_id,
             event_type=event_type,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             detail=detail,
         )
         self._audit_log.append(event)

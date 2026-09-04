@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from marga_schemas.trust import SignedMessage, TrustAssessment, TrustLevel
@@ -106,7 +106,7 @@ async def health() -> HealthResponse:
     """Health check endpoint."""
     return HealthResponse(
         status="ok",
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         replay_cache_size=_replay_cache.size,
     )
 

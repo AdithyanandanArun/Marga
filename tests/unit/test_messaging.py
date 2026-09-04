@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from marga_messaging.connectivity import ConnectivityMonitor
 from marga_messaging.network_model import LinkConfig, NetworkModel, NetworkModelDecorator
@@ -31,7 +31,7 @@ def _make_message(
         topic=topic,
         priority=priority,
         sender_id=sender_id,
-        timestamp=timestamp or datetime.now(timezone.utc),
+        timestamp=timestamp or datetime.now(UTC),
         ttl_s=ttl_s,
         payload=payload or {},
     )
@@ -114,7 +114,7 @@ class TestInProcessTransport:
         await transport.subscribe("v2x/test", handler)
 
         expired_msg = _make_message(
-            timestamp=datetime.now(timezone.utc) - timedelta(seconds=120),
+            timestamp=datetime.now(UTC) - timedelta(seconds=120),
             ttl_s=60,
         )
         result = await transport.publish("v2x/test", expired_msg)
@@ -219,7 +219,7 @@ class TestMessagePriorityQueue:
 
         expired = _make_message(
             priority=MessagePriority.OPERATIONAL,
-            timestamp=datetime.now(timezone.utc) - timedelta(seconds=120),
+            timestamp=datetime.now(UTC) - timedelta(seconds=120),
             ttl_s=60,
         )
         # Force enqueue by setting timestamp to look fresh for TTL check on enqueue,
@@ -338,7 +338,7 @@ class TestStoreForward:
 
         expired_msg = _make_message(
             priority=MessagePriority.ANALYTICS,
-            timestamp=datetime.now(timezone.utc) - timedelta(seconds=120),
+            timestamp=datetime.now(UTC) - timedelta(seconds=120),
             ttl_s=60,
         )
         sf.store(expired_msg, QueueClass.ANALYTICS)
@@ -351,7 +351,7 @@ class TestStoreForward:
         sf = StoreForwardManager()
 
         expired = _make_message(
-            timestamp=datetime.now(timezone.utc) - timedelta(seconds=120),
+            timestamp=datetime.now(UTC) - timedelta(seconds=120),
             ttl_s=60,
         )
         sf.store(expired, QueueClass.ANALYTICS)
@@ -385,7 +385,7 @@ class TestStoreForward:
         """Storing the same message_id with a newer timestamp updates the entry."""
         sf = StoreForwardManager()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         msg_old = _make_message(timestamp=now - timedelta(seconds=10), payload={"v": 1})
         msg_new = V2XMessage(
             message_id=msg_old.message_id,

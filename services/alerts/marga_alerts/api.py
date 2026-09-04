@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -58,7 +58,7 @@ async def _broadcast(event_type: str, alert: Alert) -> None:
     payload = {
         "event": event_type,
         "alert": json.loads(alert.model_dump_json()),
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
     }
     async with _clients_lock:
         dead: list[_WsClient] = []

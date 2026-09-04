@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from marga_schemas.common import ActorType
 from marga_schemas.trust import SignedMessage, TrustLevel
@@ -19,7 +19,7 @@ from marga_trust.validator import TrustValidator
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_message(

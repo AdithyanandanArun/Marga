@@ -7,8 +7,9 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
-from typing import Callable, Protocol, runtime_checkable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Protocol, runtime_checkable
 
 import websockets
 from marga_schemas.common import ConnectivityState
@@ -48,8 +49,8 @@ class V2XTransport(Protocol):
 
 def _is_expired(message: V2XMessage) -> bool:
     """Check whether a message's TTL has elapsed."""
-    now = datetime.now(timezone.utc)
-    ts = message.timestamp if message.timestamp.tzinfo else message.timestamp.replace(tzinfo=timezone.utc)
+    now = datetime.now(UTC)
+    ts = message.timestamp if message.timestamp.tzinfo else message.timestamp.replace(tzinfo=UTC)
     elapsed = (now - ts).total_seconds()
     return elapsed > message.ttl_s
 
@@ -118,7 +119,7 @@ class InProcessTransport:
             connectivity=ConnectivityState.FULL,
             direct_peers=len(self._subscriptions),
             cloud_reachable=True,
-            last_cloud_contact=datetime.now(timezone.utc),
+            last_cloud_contact=datetime.now(UTC),
             queue_depth={},
         )
 
@@ -158,7 +159,7 @@ class WebSocketTransport:
     async def _connect(self) -> ClientConnection:
         ws = await websockets.connect(self._endpoint)
         self._cloud_reachable = True
-        self._last_cloud_contact = datetime.now(timezone.utc)
+        self._last_cloud_contact = datetime.now(UTC)
         return ws
 
     async def _ensure_connected(self) -> ClientConnection | None:
@@ -202,7 +203,7 @@ class WebSocketTransport:
                         except Exception:
                             logger.exception("Handler error for subscription %s", sub_id)
 
-                self._last_cloud_contact = datetime.now(timezone.utc)
+                self._last_cloud_contact = datetime.now(UTC)
 
             except websockets.ConnectionClosed:
                 logger.info("WebSocket connection closed, reconnecting...")
@@ -231,7 +232,7 @@ class WebSocketTransport:
             }
             await ws.send(json.dumps(payload))
             self._publish_count += 1
-            self._last_cloud_contact = datetime.now(timezone.utc)
+            self._last_cloud_contact = datetime.now(UTC)
             return True
         except Exception:
             logger.exception("Failed to publish message via WebSocket")

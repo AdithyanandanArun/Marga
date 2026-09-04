@@ -5,7 +5,7 @@ from __future__ import annotations
 import heapq
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from marga_schemas.messaging import MessagePriority, V2XMessage
 
@@ -73,8 +73,8 @@ class MessagePriorityQueue:
         (either expired or shed due to backpressure).
         """
         # Drop expired messages immediately.
-        now = datetime.now(timezone.utc)
-        ts = message.timestamp if message.timestamp.tzinfo else message.timestamp.replace(tzinfo=timezone.utc)
+        now = datetime.now(UTC)
+        ts = message.timestamp if message.timestamp.tzinfo else message.timestamp.replace(tzinfo=UTC)
         if (now - ts).total_seconds() > message.ttl_s:
             return False
 
@@ -125,8 +125,8 @@ class MessagePriorityQueue:
                         continue
 
                     # Skip expired.
-                    now = datetime.now(timezone.utc)
-                    ts = msg.timestamp if msg.timestamp.tzinfo else msg.timestamp.replace(tzinfo=timezone.utc)
+                    now = datetime.now(UTC)
+                    ts = msg.timestamp if msg.timestamp.tzinfo else msg.timestamp.replace(tzinfo=UTC)
                     if (now - ts).total_seconds() > msg.ttl_s:
                         heapq.heappop(lane)
                         continue
