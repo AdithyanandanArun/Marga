@@ -1,0 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-wheel-metadata/
+share/python-wheels/
+*.manifest
+*.spec
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+!.env.example
+
+# UV
+.uv/
+uv.lock
+
+# Pytest
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# MyPy / type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pyright/
+.ruff_cache/
+
+# SUMO
+*.sumocfg
+*.net.xml
+*.rou.xml
+*.add.xml
+*.fcd.xml
+*.netstate.xml
+sumo-output/
+sumo_output/
+*.sumo.cfg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+logs/
+
+# Data
+data/
+*.csv
+*.parquet
+*.json.gz
+
+# Secrets
+*.pem
+*.key
+*.crt
+secrets/
