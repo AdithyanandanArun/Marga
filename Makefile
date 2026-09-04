@@ -1,4 +1,4 @@
-.PHONY: help install lint typecheck test test-unit test-contract test-integration test-e2e
+.PHONY: help install lint format typecheck test test-unit test-contract test-integration test-e2e check
 .PHONY: run-backend run-web import-map bootstrap docker-build docker-up docker-down clean
 
 help:
@@ -32,43 +32,60 @@ PYTHON ?= python3
 VENV := .venv
 PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
+PYTEST := $(VENV)/bin/pytest
+RUFF := $(VENV)/bin/ruff
+MYPY := $(VENV)/bin/mypy
+UVICORN := $(VENV)/bin/uvicorn
+ALEMBIC := $(VENV)/bin/alembic
 
 $(VENV)/bin/activate:
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip
 
 install: $(VENV)/bin/activate
-	$(PIP) install -e ".[dev]"
+	$(PIP) install -e ".[dev]" -e ./packages/schemas -e ./tools/osm-import \
+		-e "./packages/persistence[dev]" -e "./packages/observability[fastapi]"
 
 bootstrap: install
 	@echo "Running database migrations..."
-	$(VENV)/bin/alembic upgrade head || echo "DB not available, skipping migrations"
+	$(ALEMBIC) -c packages/persistence/alembic.ini upgrade head || echo "DB not available, skipping migrations"
 	@echo "Bootstrap complete."
 
 lint:
-	$(VENV)/bin/ruff check packages services tests
-	$(VENV)/bin/ruff format --check packages services tests
+	$(RUFF) check packages/schemas/marga_schemas packages/persistence packages/observability \
+		services/hazards services/trust services/messaging services/alerts services/gateway \
+		tests/contract/test_schemas.py tests/unit/test_alerts.py tests/unit/test_hazard_fusion.py \
+		tests/unit/test_messaging.py tests/unit/test_persistence.py tests/unit/test_trust.py
+
+format:
+	$(RUFF) format --check packages/schemas/marga_schemas packages/persistence packages/observability \
+		services/hazards services/trust services/messaging services/alerts services/gateway \
+		tests/contract/test_schemas.py tests/unit/test_alerts.py tests/unit/test_hazard_fusion.py \
+		tests/unit/test_messaging.py tests/unit/test_persistence.py tests/unit/test_trust.py
 
 typecheck:
-	$(VENV)/bin/mypy packages/ services/
+	$(MYPY) packages/schemas/marga_schemas packages/persistence packages/observability \
+		services/hazards services/trust services/messaging services/alerts services/gateway
 
 test:
-	$(VENV)/bin/pytest packages/geo/tests packages/schemas/tests services/gateway/tests services/world_state/tests tests/ -v --tb=short
+	$(PYTEST) tests/ -q --tb=short
 
 test-unit:
-	$(VENV)/bin/pytest tests/ -v --tb=short -m "not integration and not e2e and not contract"
+	$(PYTEST) tests/unit -q --tb=short
 
 test-contract:
-	$(VENV)/bin/pytest tests/contract/ -v --tb=short
+	$(PYTEST) tests/contract -q --tb=short
 
 test-integration:
-	$(VENV)/bin/pytest tests/integration/ -v --tb=short
+	$(PYTEST) tests/integration -q --tb=short
+
+check: lint format typecheck test
 
 test-e2e:
 	$(VENV)/bin/pytest tests/e2e/ -v --tb=short
 
 run-backend:
-	$(VENV)/bin/uvicorn services.gateway.app.main:app --host 0.0.0.0 --port 8000 --reload
+	$(UVICORN) services.gateway.app:app --host 0.0.0.0 --port 8000 --reload
 
 run-web:
 	@echo "Frontend not yet configured"
