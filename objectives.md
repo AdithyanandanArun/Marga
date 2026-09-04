@@ -1,270 +1,261 @@
-# Marga — Remaining Objectives
+# Marga — Three-Agent Demo Objectives
 
-Cross-referenced against the engineering build manual (README.md, AGENTS.md roadmap).
-Items marked ✅ are done. Everything below is not yet implemented.
+This plan is aligned with the product manual and the actual judging story:
 
----
+> Marga predicts mixed-traffic conflicts and continues delivering explainable
+> safety warnings when Indian-road connectivity or GPS quality degrades.
 
-## Section 1 — Adithyan Agent 1: World State, Trajectories, Collision Risk
+The demo is one deterministic, road-constrained safety loop. The browser must
+render backend truth; it must never invent risks, alerts, or metrics.
 
-Owner: **Adithyan — Agent 1** (world state, geospatial/position core, trajectories, collision risk, evidence)
+## Demo acceptance flow
 
-### 1.1 World-state WebSocket emits wrong format
-**Status: ✅ implemented.** The gateway stream emits `WorldDelta` messages with
-`kind`, `server_time`, `upserts`, and `deletes`; the existing `actors` field is
-retained only as a compatibility field for older clients. The frontend store can
-now apply snapshots and incremental entity updates.
-```json
-{ "kind": "snapshot", "server_time": "...", "upserts": [...], "deletes": [] }
+The team is finished when a judge can see this without explanation:
+
+```text
+normal road traffic
+  → bike/car approach one junction
+  → TTC conflict is predicted
+  → evidence-bearing warning appears
+  → internet becomes unavailable
+  → direct V2X keeps the warning alive
+  → GPS uncertainty expands
+  → fused confidence changes
+  → driver accepts a safer action
+  → risk resolves and the trace remains inspectable
 ```
-The backend (`/v1/world-state/stream`) sends `{"actors": [...]}`. The frontend store's
-`applyDelta()` never fires with real data. Fix: rewrite `world_state.py` stream to emit
-proper `WorldDelta`-shaped payloads keyed by `entity_type` and `entity_id`.
 
-### 1.2 Canonical ingestion gateway endpoints missing
-**Status: ✅ implemented.** The gateway exposes the documented canonical paths:
-`POST /v1/ingest/vehicle-state`, `POST /v1/ingest/pedestrian-state`, and
-`POST /v1/ingest/hazard-observation`. They update world state and publish a
-canonical delta. The legacy adapter-envelope endpoint remains supported.
+The first screen must show only the road scene, relevant actors, one active
+incident, TTC, confidence, GPS quality, network state, evidence, and the next
+action. Advanced metrics and service controls belong on secondary screens.
 
-README promises:
+---
+
+## Agent 1 — Judge-facing application and visual truth
+
+Owner: **Agent 1**
+
+Agent 1 owns everything the judge sees in the browser. The UI is a renderer of
+canonical backend state, not a simulation engine.
+
+### A1.1 Connect the dashboard to live backend state
+
+- Start `WorldStream` from the dashboard lifecycle.
+- Track WebSocket connection state.
+- Stop the fixture fallback when the real stream connects.
+- Keep fixtures available only through an explicit offline/demo switch.
+- Remove browser-side random risk, alert, and metric generation from the normal path.
+
+Acceptance: a backend ingest changes the browser; a browser timer alone cannot
+create a safety alert.
+
+### A1.2 Build the focused resilience screen
+
+Replace the control-room-first layout with a focused junction view containing:
+
+- 5–8 road actors maximum;
+- road/lane geometry and direction-oriented vehicle markers;
+- short motion trails and trajectory projections;
+- one highlighted conflict point;
+- uncertainty circles;
+- network state: `INTERNET`, `DIRECT V2X`, or `OFFLINE`;
+- GPS quality and fused confidence;
+- one evidence-bearing alert card.
+
+Move health charts, trust details, bulk hazards, and infrastructure diagnostics
+behind an Advanced/Inspector view.
+
+### A1.3 Make the warning understandable
+
+The active alert must show:
+
+- plain-language threat;
+- affected actors;
+- TTC countdown;
+- confidence;
+- GPS uncertainty;
+- evidence sources;
+- policy version and trace ID;
+- recommended action.
+
+### A1.4 Show connectivity and positioning resilience
+
+- Render the internet-off transition visibly.
+- Render direct V2X links only for actors within configured range.
+- Expand the uncertainty radius when GPS quality degrades.
+- Display confidence changing rather than hiding degraded quality.
+
+### A1.5 Complete the operator action
+
+- Add `Accept Reroute` for critical/high alerts.
+- Render returned route geometry.
+- Clear only the alerts resolved by the backend.
+- Show a short “why this route” explanation.
+
+### A1.6 Agent 1 verification
+
+- Dashboard TypeScript build and typecheck pass.
+- Browser E2E test proves backend actor event → visible risk → visible alert.
+- No random risk, alert, or metric generation is active in the normal path.
+- A presenter can complete the acceptance flow in under two minutes.
+
+---
+
+## Agent 2 — Backend truth, resilience, and explainability
+
+Owner: **Agent 2**
+
+Agent 2 owns the canonical backend pipeline and all state that determines the
+meaning of the UI.
+
+### A2.1 Stabilize canonical contracts
+
+- Publish one documented set of REST/WebSocket paths.
+- Align README, frontend, and gateway route names.
+- Preserve schema version, UTC timestamp, source, trace ID, confidence, and
+  uncertainty on every event.
+- Add contract tests for vehicle, pedestrian, hazard, connectivity, and position
+  quality events.
+
+### A2.2 Make the safety pipeline authoritative
+
+The production path must be:
+
+```text
+canonical event
+  → world state
+  → position fusion
+  → trajectory/TTC risk
+  → prioritized alert
+  → WebSocket delivery
 ```
-POST /v1/ingest/vehicle-state
-POST /v1/ingest/pedestrian-state
-POST /v1/ingest/hazard-observation
-```
-None exist on the gateway. Currently the only ingest path is `POST /v1/world-state/ingest`
-(our interim endpoint). Real adapters and the frontend need the canonical paths.
 
-### 1.3 Trajectory prediction and TTC collision risk — not built
-**Status: ✅ implemented.** `services/position/` predicts conservative
-constant-acceleration trajectories with growing uncertainty. `services/risk/`
-evaluates pairwise constant-velocity TTC in a local metric frame, emits
-`REAR_END`, `HEAD_ON`, or `INTERSECTION_CONFLICT` `RiskEvent`s, and exposes
-them as `risk` world-state entities.
+- Backend creates all `RiskEvent`s and alerts.
+- Frontend never fabricates safety outcomes.
+- Risk evidence includes TTC, minimum distance, uncertainty, confidence, and
+  policy version.
 
-README roadmap item 4: *"Build generic trajectory and time-to-collision risk detection."*
-- No trajectory extrapolation service exists.
-- The frontend `showTrajectories` toggle has no data to render.
-- The `REAR_END` / `INTERSECTION_CONFLICT` / `HEAD_ON` risk types shown in fixtures
-  are fake — no real TTC computation exists.
-- Need: `services/position/` trajectory engine; expose conflict events as `risk.detected`.
+### A2.3 Implement connectivity degradation
 
-### 1.4 Incident trace endpoint missing
-**Status: ✅ implemented.** Each TTC risk is retained with its inputs, derived
-metrics, evidence, and policy version. Retrieve it through
-`GET /v1/incidents/{id}/trace`, where the incident ID is the risk ID.
+- Add canonical connectivity state transitions.
+- Support `FULL`, `DIRECT_ONLY`, `INTERMITTENT`, and `ISOLATED`.
+- Preserve safety-critical local delivery in `DIRECT_ONLY` mode.
+- Lower confidence or change delivery path when cloud connectivity disappears.
+- Expose the active state through the world/metrics stream.
 
-README API: `GET /v1/incidents/{id}/trace`
-No endpoint exists. Alerts are currently in-memory only. When an alert fires, the
-contributing `RiskEvent` evidence is not persisted with a trace ID. Needed for:
-explainability, replay, and the build manual's "Explainable decisions" hard rule.
+### A2.4 Implement positioning degradation
 
-### 1.5 Position uncertainty fusion service missing
-**Status: ✅ implemented.** `PositionFusionService` inverse-variance fuses
-same-actor canonical observations and carries the resulting uncertainty into
-trajectory confidence and TTC-risk confidence. Prediction uncertainty grows
-over time rather than fabricating precision during degraded positioning.
+- Accept position-quality/GPS degradation events.
+- Fuse GNSS/RSU/vehicle observations using uncertainty-aware weighting.
+- Propagate uncertainty into trajectory confidence, TTC confidence, and alerts.
+- Never replace degraded positioning with a precise fabricated coordinate.
 
-`services/position/` does not exist. Position uncertainty is passed through from SUMO
-as a raw number but never fused from multiple sources (GNSS + RSU range + speed).
-Offline-first requirement: when GPS degrades, uncertainty must propagate into every
-downstream confidence score automatically.
+### A2.5 Persist and explain incidents
 
----
+- Persist risk events, alerts, evidence, and decision traces.
+- Implement `GET /v1/incidents/{id}/trace` against durable storage.
+- Make traces replayable after a gateway restart.
+- Add an end-to-end test for trace creation and retrieval.
 
-## Section 2 — Adithyan Agent 2: Persistence, Transport, Observability, CI
+### A2.6 Implement operator actions and observability
 
-Owner: **Adithyan — Agent 2** (hazard fusion, trust/security, offline transport, persistence, observability, CI/deploy)
+- Complete reroute resolution and return resolved alert IDs.
+- Add detector latency, risk count, alert count, confidence, uncertainty, and
+  connectivity metrics.
+- Replace random dashboard metrics with real counters/histograms.
+- Add gateway/safety/scenario services to the correct Compose file.
+- Correct the Makefile Compose path.
 
-### 2.1 NATS JetStream — in docker-compose, nothing uses it
-`infra/docker-compose.yml` provisions NATS 2.10 with JetStream. No service publishes or
-subscribes to any NATS subject. The canonical event families (`actor.state.updated`,
-`risk.detected`, `alert.issued`, etc.) should be published to NATS so services can
-subscribe independently. Currently all communication is direct HTTP/WebSocket only.
+### A2.7 Agent 2 verification
 
-### 2.2 Redis — provisioned but unused
-Redis 7 is in compose. No service reads or writes to it. Intended use: ephemeral world-state
-(actor TTL expiry), rate limiting for trust service, alert deduplication window.
-Implement at minimum: actor state TTL so stale actors expire from the live map.
-
-### 2.3 Alembic migrations not applied/tested
-`packages/persistence/alembic/` exists but migrations have never been run against a live
-PostGIS instance in CI. `make bootstrap` skips on DB unavailability. The persistence
-package has ORM models but no verified schema in the running database.
-Needed: migration smoke test in CI using the PostGIS service container.
-
-### 2.4 OpenTelemetry tracing not wired through services
-`packages/observability/marga_observability/` exists. The gateway has a guarded
-`FastAPIInstrumentor` import. No service actually configures an OTLP exporter or
-propagates trace context between service calls. Every cross-service hop is currently
-untraceable. Wire `OTEL_EXPORTER_OTLP_ENDPOINT` env → exporter → span propagation.
-
-### 2.5 Prometheus metrics only on gateway, not on safety/scenario/alerts
-`GET /metrics` exists on the gateway with request count and duration. The safety
-detectors, scenario service, alerts service, and hazard fusion have no metrics exported.
-Critical missing metrics: detector evaluation latency, alert issue rate, hazard count,
-trust rejection rate — all referenced in `SystemMetrics` type in the frontend but
-only populated by the fixture player with random numbers.
-
-### 2.6 Docker image for gateway not wired into docker-compose
-`Dockerfile` exists and builds the gateway image. `infra/docker-compose.yml` has only
-infra services (postgres, redis, nats). The gateway, safety service, and scenario service
-have no compose service definitions. Running the platform requires manual `uvicorn`
-invocation. Add compose services for at minimum: gateway and scenario-service.
+- Full canonical contract suite passes.
+- In-process E2E proves event → risk → alert → WebSocket.
+- Connectivity-off warning remains available through direct V2X.
+- GPS degradation increases uncertainty and changes confidence.
+- `make test` and focused typechecks are green, with unrelated failures tracked.
 
 ---
 
-## Section 3 — Amritha: Simulation, Scenarios, Real-Adapter Stubs
+## Amrita — deterministic road scenario and input feeds
 
-Owner: **Amritha** (OSM/SUMO, simulation and world systems, deterministic scenarios, failure injection)
+Owner: **Amrita**
 
-### 3.1 Scenario Studio "Run" does not wire to SUMO
-**Status: ✅ implemented.** Scenario runs start the deterministic mock simulation and
-ingest canonical actor events into the gateway.
-The scenario-service has full CRUD (`POST /v1/scenarios`, `POST /v1/scenarios/{id}/runs`)
-but `_start_run()` in `main.py` creates a `TimeController` only — it never instantiates
-`SimulationRunner` or an adapter. Pressing Run in the Studio creates a scenario record
-but no simulation starts.
-Fix: when a run is created, spin up a `SimulationRunner` with a mock (or real SUMO)
-adapter and push its events to the world-state store via `ingest_events()`.
+Amrita owns realistic, repeatable inputs. The scenario must look like traffic on
+a road, not random points moving over a map.
 
-### 3.2 Real-world adapter stubs missing
-**Status: ✅ implemented.** GNSS, OBU, RSU, and phone-GPS protocol adapters are
-available through the simulation adapter factory and covered by integration tests.
-README: *"replacing a simulator feed with a real feed must require adapter/configuration
-changes, not a rewrite of the core."* No real-world adapter stubs exist for:
-- GNSS receiver (NMEA/u-blox over serial)
-- OBU (on-board unit) via DSRC/C-V2X radio frame
-- RSU (roadside unit) observation feed
-- Phone GPS (iOS/Android background location)
-These need to be thin Protocol-implementing stubs in `services/simulation-adapter/`
-alongside the existing `sumo_traci.py` and `sumo_libsumo.py`.
+### AM.1 Build the Bangalore junction scenario
 
-### 3.3 libsumo scale path not validated
-**Status: ✅ implemented.** The libsumo adapter has a headless integration test that
-validates normalized event output over multiple ticks.
-`sumo_libsumo.py` exists but has never been tested. For scale (>500 vehicles) the
-SUMO documentation recommends libsumo over TraCI (no socket overhead). There is no
-benchmark or CI job comparing TraCI vs libsumo throughput. Needed: a headless
-integration test that runs the libsumo adapter for N ticks and asserts the event rate.
+- Use a real or clearly defined Bangalore road/junction geometry.
+- Define lanes/routes and legal movement directions.
+- Include one ego car/auto, one bus/bike conflict actor, and a small background
+  traffic population.
+- Keep all actors on road geometry with lane offsets and smooth acceleration.
+- Use a fixed seed and deterministic timestamps for repeatable judging.
 
-### 3.4 Load generation tooling missing
-**Status: ✅ implemented.** `tools/load-gen/load_gen.py` replays fixtures or generated
-actors at configurable frequency against the gateway ingestion endpoint.
-`tools/` has only `osm-import`. README roadmap item 7 mentions *"scale testing."*
-No load generator exists to replay a recorded scenario at 10×, replay with many
-simultaneous vehicles, or stress the safety detector pipeline.
-Needed: `tools/load-gen/` — a script that replays a fixture file at configurable Hz
-against the gateway's ingest endpoint.
+### AM.2 Schedule the resilience event sequence
 
-### 3.5 Deterministic replay backend not wired
-**Status: ✅ implemented.** Scenario runs expose timestamp-windowed event retrieval at
-`GET /v1/scenarios/{scenario_id}/runs/{run_id}/events`.
-`services/scenario-service/app/time_control.py` has a `seek()` method for replay.
-`services/trust/marga_trust/replay.py` has a `ReplayCache`. But `ReplayView.tsx`
-has no backend to call. No endpoint exists to serve a recorded event sequence by
-timestamp. The replay scrubber in the frontend is purely cosmetic.
-Needed: persist canonical events to PostgreSQL during a run; expose
-`GET /v1/scenarios/{id}/runs/{run_id}/events?from_s=&to_s=` for the replay view.
+The scenario scheduler must emit canonical events for:
 
----
+1. normal traffic and good GPS;
+2. an approaching mixed-traffic conflict;
+3. GPS degradation from approximately ±4 m to ±25 m;
+4. internet loss with direct V2X still available;
+5. conflict warning and recommended action;
+6. reroute/braking resolution;
+7. restoration of connectivity and positioning quality.
 
-## Section 4 — Hrishi: Safety Evaluation, Frontend Safety Layers, E2E Tests
+These are scenario inputs consumed by the real backend, not frontend special
+cases or hard-coded alert outcomes.
 
-Owner: **Hrishi** (safety policies, acceptance evaluation, frontend safety features)
+### AM.3 Integrate simulation with the gateway
 
-### 4.1 E2E test suite missing entirely
-`tests/e2e/` does not exist. README and AGENTS.md both require E2E verification.
-Needed: a Playwright (or httpx-based) suite that:
-- starts the gateway in-process
-- drives a scenario run end-to-end
-- asserts that actor events → risk detection → alert → WebSocket delivery works
-  without any fixture player involvement.
+- Scenario Studio Run must start the scenario service.
+- The simulation must publish canonical actor, infrastructure, connectivity,
+  and position-quality events to the gateway.
+- The dashboard must receive the resulting world and alert streams.
+- Stop/cancel must cleanly terminate the run.
 
-### 4.2 V2X links layer — toggle exists, layer does not
-**Status: ✅ implemented.** The V2X toggle now renders coverage-filtered vehicle-to-RSU
-links using haversine distance.
-`showV2XLinks` toggle in `LayerControls.tsx` is wired to state but no layer function
-reads it. No `createV2XLinksLayer()` exists. Without this, the "V2X Links" toggle
-appears in the UI but does nothing.
-Fix: create `apps/web-dashboard/src/map/layers/v2xLinks.ts` — a `LineLayer` connecting
-each vehicle to RSUs within `rsu.coverage_m` using haversine from `utils/geo.ts`.
-Wire into `MapView.tsx` with `showV2XLinks` guard.
+### AM.4 Preserve simulation-reality parity
 
-### 4.3 Trajectory layer — toggle exists, layer does not
-**Status: ✅ implemented.** The trajectory toggle now renders 3-second kinematic paths.
-`showTrajectories` has the same problem as V2X links. No `createTrajectoriesLayer()`
-exists. The trajectory toggle does nothing.
-Fix: `apps/web-dashboard/src/map/layers/trajectories.ts` — a `PathLayer` projecting
-each vehicle's heading + speed for the next 3 s (3 waypoints at 1 s intervals).
-Wire into `MapView.tsx` with `showTrajectories` guard.
+- Keep SUMO/mock output behind the adapter boundary.
+- Validate pedestrian, bike, auto, bus, and car normalization.
+- Keep GNSS, OBU, RSU, and phone-GPS adapters on the same canonical contracts.
+- Add one parity test showing a simulator feed and real-adapter-shaped feed
+  produce equivalent canonical state.
 
-### 4.4 Traffic signal positions are random — layer is broken
-**Status: ✅ implemented.** Signals use their supplied canonical position and stable
-housing/lens layers; no random coordinates remain.
-`infrastructure.ts` line ~51: `getPosition: () => [77.5946 + Math.random() * 0.03, ...]`
-Signal dots jump to a new random position every render frame. The fix requires:
-- Adding `position?: { lat: number; lon: number }` to `TrafficSignalState` in
-  `apps/web-dashboard/src/types/canonical.ts`
-- Populating position from the backend's `InfrastructureState.position`
-- Removing the `Math.random()` line from `infrastructure.ts`
+### AM.5 Replay and load validation
 
-### 4.5 Accept-reroute AlertPanel action missing
-`POST /v1/world-state/reroute` now exists (Amritha, round_2). The frontend
-`AlertPanel.tsx` has no "Accept Reroute" button or call. For CRITICAL/HIGH alerts
-the panel should offer a reroute action that:
-- Calls `POST /v1/world-state/reroute` with the actor's current position
-- Renders the returned `route_geometry` waypoints as a `PathLayer` on the map
-- Dismisses the alert from the panel for `affected_actor_ids`
+- Persist the scenario event sequence with timestamps.
+- Serve replay windows by scenario/run ID.
+- Run the Bangalore scenario at normal speed and accelerated speed.
+- Record event throughput, risk latency, and alert delivery results.
 
-### 4.6 False-positive / missed-detection evaluation not run against real data
-`tests/safety/evaluation/` has `test_false_positives.py` and `test_missed_detections.py`
-but they run against the fixture player's synthetic data. No evaluation has been run
-against a real SUMO scenario replay. Policy thresholds in `packages/safety_policies/`
-have not been validated for Indian urban traffic patterns (high auto-rickshaw/motorcycle
-density, frequent pedestrian incursions). Run the evaluator against
-`services/scenario-service/fixtures/bangalore_morning_rush.json` and document
-false-positive rates per detector.
+### AM.6 Amrita verification
+
+- Scenario starts from the UI and produces backend events.
+- Actors remain on roads throughout the run.
+- The same seeded run produces the same event sequence.
+- The full demo acceptance flow can be replayed from a clean startup.
 
 ---
 
-## Section 5 — Ali: Control Center UX, Driver Console, Replay, Docs
+## Explicitly deferred until the demo loop works
 
-Owner: **Ali** (Control Center, Driver Console, Scenario Studio, live-map UX, E2E verification)
+- broad control-center analytics;
+- nationwide traffic simulation;
+- large animal/hazard catalogs;
+- advanced trust dashboards;
+- full NATS/Redis optimization beyond what the resilience flow needs;
+- nonessential driver commands;
+- visual polish that does not clarify the three resilience states.
 
-### 5.1 Driver Console backend commands not wired
-`DriverConsole.tsx` exists but sends no API calls. Planned driver commands:
-- `POST /v1/actors/{id}/command` — speed override, route change, stop
-- `POST /v1/signals/{id}/command` — signal phase override by operator
-These map to `SimulationAdapter.apply_vehicle_command()` and `apply_signal_command()`
-which exist in the protocol but are not exposed as gateway endpoints.
+## Definition of done
 
-### 5.2 Replay View has no backend
-`ReplayView.tsx` exists with a scrubber UI. No backend serves recorded events.
-This is blocked on Amritha's 3.5 (persist events during run). Once that lands:
-wire `ReplayView.tsx` to `GET /v1/scenarios/{id}/runs/{run_id}/events` and drive
-the world-store with timestamped playback at the scrubber position.
+The work is not done because the repository contains many services. It is done
+when a judge can understand, in five seconds, that Marga:
 
-### 5.3 Scenario Studio actor placement — map click not implemented
-In `ScenarioStudio.tsx`, the "Add Actor" button creates an actor at a hardcoded
-`{lat: 12.9716, lon: 77.5946}`. Actors should be placed by clicking on the map.
-Fix: on "Add Actor", enter placement mode; on MapView click, read the click lat/lon
-and add the actor at that position. The `onEntityClick` prop plumbing is already
-in MapView; add a sibling `onMapClick` prop.
-
-### 5.4 `docs/` directory missing entirely
-AGENTS.md pre-push checklist: *"Breaking contract changes are documented with a
-migration note or ADR."* No `docs/` directory exists. Missing:
-- `docs/adr/` — Architecture Decision Records (e.g. why two VehicleState schemas,
-  why haversine over PostGIS for V2X range, why NATS over Kafka)
-- `docs/api.md` — canonical endpoint reference
-- `docs/runbook.md` — how to start the full stack locally and in production
-
-### 5.5 `make typecheck` has unresolved strict-MyPy errors
-The original HANDOFF.md noted: *"existing baseline still reports unrelated strict-MyPy
-errors in Agent 2 services."* These were never fixed. Running `make typecheck` currently
-exits non-zero. CI fails the `mypy` step silently (it's not blocking merge).
-Fix: resolve all mypy errors in `services/hazards`, `services/trust`, `services/alerts`,
-`services/gateway`, then set `strict = true` for those paths in `pyproject.toml` and
-enable the typecheck job as a required CI check.
+1. predicts a real mixed-traffic conflict;
+2. continues warning when internet connectivity fails;
+3. reasons honestly about degraded GPS;
+4. explains its evidence and confidence; and
+5. helps the road user resolve the danger.
