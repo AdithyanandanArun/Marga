@@ -70,6 +70,12 @@ class AlertLifecycleManager:
         alert = alert.model_copy(update={"state": AlertState.ACTIVE})
         self._alerts[alert.alert_id] = alert
         self._created_count += 1
+        # Metrics (obj 2.5)
+        try:
+            from marga_observability.metrics import metrics as _m
+            _m.alerts_issued_total.labels(alert_type=alert.alert_type, priority=alert.priority).inc()
+        except Exception:
+            pass
         return alert
 
     def update_alert(self, alert_id: UUID, updates: dict[str, Any]) -> Alert:
@@ -112,6 +118,12 @@ class AlertLifecycleManager:
             }
         )
         self._alerts[alert.alert_id] = alert
+        # Metrics (obj 2.5)
+        try:
+            from marga_observability.metrics import metrics as _m
+            _m.alerts_cleared_total.inc()
+        except Exception:
+            pass
         return alert
 
     def expire_stale(self) -> list[UUID]:

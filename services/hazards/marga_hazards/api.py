@@ -53,9 +53,41 @@ class HealthResponse(BaseModel):
 @router.post("/ingest/hazard-observation", response_model=HazardResponse, status_code=201)
 async def ingest_observation(obs: HazardObservation) -> HazardResponse:
     """Ingest a new hazard observation, run fusion, return fused hazard."""
-    hazard = _engine.ingest_observation(obs)
+    try:
+        from marga_observability.span import optional_span
+    except ImportError:
+        from contextlib import contextmanager
+
+        @contextmanager
+        def optional_span(*a: object, **kw: object):  # type: ignore[misc]
+            yield None
+
+    with optional_span("hazard-fusion", "ingest_observation", {"hazard_type": obs.hazard_type}):
+        hazard = _engine.ingest_observation(obs)
+
     hid = str(hazard.hazard_id)
     obs_count = len(_engine.observation_history.get(hid, []))
+
+    # Metrics (obj 2.5)
+    try:
+        from marga_observability.metrics import metrics as _m
+
+        result = "merged" if obs_count > 1 else "created"
+        _m.hazard_fusion_operations_total.labels(result=result).inc()
+    except Exception:
+        pass
+
+    # Publish to NATS (obj 2.1)
+    try:
+        from packages.event_bus.bus import get_event_bus
+
+        bus = get_event_bus()
+        if bus and bus.connected:
+            subject = "hazard.observed" if obs_count == 1 else "hazard.updated"
+            await bus.publish(subject, hazard.model_dump(mode="json"))
+    except Exception:
+        pass
+
     return HazardResponse(hazard=hazard, observation_count=obs_count)
 
 

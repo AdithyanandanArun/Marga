@@ -103,6 +103,29 @@ async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
     upserts = [_store_model("vehicle", fused.actor_id, fused)]
     upserts.extend(_refresh_risks())
     _notify(_world_delta("delta", upserts))
+    state_dict = upserts[0]["data"]
+    try:
+        from packages.event_bus.bus import get_event_bus
+
+        bus = get_event_bus()
+        if bus and bus.connected:
+            await bus.publish("actor.state.updated", state_dict)
+    except Exception:
+        pass
+    try:
+        from packages.redis_store.actor_ttl import get_ttl_manager
+
+        mgr = get_ttl_manager()
+        if mgr:
+            await mgr.touch(fused.actor_id, fused.model_dump_json())
+    except Exception:
+        pass
+    try:
+        from marga_observability.metrics import metrics as _m
+
+        _m.actor_updates_total.labels(source="INGESTION").inc()
+    except Exception:
+        pass
     return {
         "entity": upserts[0],
         "trajectory": predict_trajectory(fused).model_dump(mode="json"),

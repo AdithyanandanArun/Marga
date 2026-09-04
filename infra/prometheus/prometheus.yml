@@ -3,7 +3,20 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "marga-backend"
+  - job_name: "marga-gateway"
+    static_configs:
+      - targets: ["marga-gateway:8000"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: "marga-scenario"
+    static_configs:
+      - targets: ["marga-scenario:8001"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Local dev fallback (non-Docker)
+  - job_name: "marga-local"
     static_configs:
       - targets: ["host.docker.internal:8000"]
     metrics_path: /metrics

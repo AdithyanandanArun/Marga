@@ -28,11 +28,11 @@ services:
       retries: 5
 
   nats:
-    image: nats:2-alpine
+    image: nats:2.10-alpine
     ports:
       - "4222:4222"
       - "8222:8222"
-    command: ["--jetstream"]
+    command: ["--jetstream", "--http_port", "8222"]
 
   prometheus:
     image: prom/prometheus:v2.54.0
@@ -48,6 +48,47 @@ services:
       - "4317:4317"
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+asyncpg://marga:marga@postgres:5432/marga
+      REDIS_URL: redis://redis:6379/0
+      EVENT_BUS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: marga-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scenario-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    command: ["uvicorn", "services.scenario_service.app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+asyncpg://marga:marga@postgres:5432/marga
+      EVENT_BUS_URL: nats://nats:4222
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: marga-scenario
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:
