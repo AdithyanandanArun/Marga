@@ -120,6 +120,8 @@ invocation. Add compose services for at minimum: gateway and scenario-service.
 Owner: **Amritha** (OSM/SUMO, simulation and world systems, deterministic scenarios, failure injection)
 
 ### 3.1 Scenario Studio "Run" does not wire to SUMO
+**Status: ✅ implemented.** Scenario runs start the deterministic mock simulation and
+ingest canonical actor events into the gateway.
 The scenario-service has full CRUD (`POST /v1/scenarios`, `POST /v1/scenarios/{id}/runs`)
 but `_start_run()` in `main.py` creates a `TimeController` only — it never instantiates
 `SimulationRunner` or an adapter. Pressing Run in the Studio creates a scenario record
@@ -128,6 +130,8 @@ Fix: when a run is created, spin up a `SimulationRunner` with a mock (or real SU
 adapter and push its events to the world-state store via `ingest_events()`.
 
 ### 3.2 Real-world adapter stubs missing
+**Status: ✅ implemented.** GNSS, OBU, RSU, and phone-GPS protocol adapters are
+available through the simulation adapter factory and covered by integration tests.
 README: *"replacing a simulator feed with a real feed must require adapter/configuration
 changes, not a rewrite of the core."* No real-world adapter stubs exist for:
 - GNSS receiver (NMEA/u-blox over serial)
@@ -138,12 +142,16 @@ These need to be thin Protocol-implementing stubs in `services/simulation-adapte
 alongside the existing `sumo_traci.py` and `sumo_libsumo.py`.
 
 ### 3.3 libsumo scale path not validated
+**Status: ✅ implemented.** The libsumo adapter has a headless integration test that
+validates normalized event output over multiple ticks.
 `sumo_libsumo.py` exists but has never been tested. For scale (>500 vehicles) the
 SUMO documentation recommends libsumo over TraCI (no socket overhead). There is no
 benchmark or CI job comparing TraCI vs libsumo throughput. Needed: a headless
 integration test that runs the libsumo adapter for N ticks and asserts the event rate.
 
 ### 3.4 Load generation tooling missing
+**Status: ✅ implemented.** `tools/load-gen/load_gen.py` replays fixtures or generated
+actors at configurable frequency against the gateway ingestion endpoint.
 `tools/` has only `osm-import`. README roadmap item 7 mentions *"scale testing."*
 No load generator exists to replay a recorded scenario at 10×, replay with many
 simultaneous vehicles, or stress the safety detector pipeline.
@@ -151,6 +159,8 @@ Needed: `tools/load-gen/` — a script that replays a fixture file at configurab
 against the gateway's ingest endpoint.
 
 ### 3.5 Deterministic replay backend not wired
+**Status: ✅ implemented.** Scenario runs expose timestamp-windowed event retrieval at
+`GET /v1/scenarios/{scenario_id}/runs/{run_id}/events`.
 `services/scenario-service/app/time_control.py` has a `seek()` method for replay.
 `services/trust/marga_trust/replay.py` has a `ReplayCache`. But `ReplayView.tsx`
 has no backend to call. No endpoint exists to serve a recorded event sequence by
@@ -173,6 +183,8 @@ Needed: a Playwright (or httpx-based) suite that:
   without any fixture player involvement.
 
 ### 4.2 V2X links layer — toggle exists, layer does not
+**Status: ✅ implemented.** The V2X toggle now renders coverage-filtered vehicle-to-RSU
+links using haversine distance.
 `showV2XLinks` toggle in `LayerControls.tsx` is wired to state but no layer function
 reads it. No `createV2XLinksLayer()` exists. Without this, the "V2X Links" toggle
 appears in the UI but does nothing.
@@ -181,6 +193,7 @@ each vehicle to RSUs within `rsu.coverage_m` using haversine from `utils/geo.ts`
 Wire into `MapView.tsx` with `showV2XLinks` guard.
 
 ### 4.3 Trajectory layer — toggle exists, layer does not
+**Status: ✅ implemented.** The trajectory toggle now renders 3-second kinematic paths.
 `showTrajectories` has the same problem as V2X links. No `createTrajectoriesLayer()`
 exists. The trajectory toggle does nothing.
 Fix: `apps/web-dashboard/src/map/layers/trajectories.ts` — a `PathLayer` projecting
@@ -188,6 +201,8 @@ each vehicle's heading + speed for the next 3 s (3 waypoints at 1 s intervals).
 Wire into `MapView.tsx` with `showTrajectories` guard.
 
 ### 4.4 Traffic signal positions are random — layer is broken
+**Status: ✅ implemented.** Signals use their supplied canonical position and stable
+housing/lens layers; no random coordinates remain.
 `infrastructure.ts` line ~51: `getPosition: () => [77.5946 + Math.random() * 0.03, ...]`
 Signal dots jump to a new random position every render frame. The fix requires:
 - Adding `position?: { lat: number; lon: number }` to `TrafficSignalState` in
