@@ -99,6 +99,7 @@ export interface TrafficSignalState {
   controller_mode: SignalControllerMode;
   source: ActorSource;
   confidence: number;
+  position?: { lat: number; lon: number };
 }
 
 export interface RoadEvent {

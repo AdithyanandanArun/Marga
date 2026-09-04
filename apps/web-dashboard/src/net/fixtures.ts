@@ -84,8 +84,17 @@ function generateHazard(i: number): Hazard {
   };
 }
 
+// Known Bangalore Central junctions — stable positions, no random drift
+const SIGNAL_POSITIONS = [
+  { lat: 12.9716, lon: 77.5946 }, // MG Road / Brigade Road
+  { lat: 12.9762, lon: 77.6033 }, // Ulsoor junction
+  { lat: 12.9698, lon: 77.5985 }, // Richmond Circle
+  { lat: 12.9784, lon: 77.5916 }, // Cunningham Rd junction
+];
+
 function generateSignal(i: number): TrafficSignalState {
   const states = ['RED', 'AMBER', 'GREEN'] as const;
+  const pos = SIGNAL_POSITIONS[i % SIGNAL_POSITIONS.length];
   return {
     signal_id: `sig-${i.toString().padStart(3, '0')}`,
     junction_id: `jnc-${i}`,
@@ -97,6 +106,7 @@ function generateSignal(i: number): TrafficSignalState {
     controller_mode: 'FIXED',
     source: 'SIMULATION',
     confidence: 0.95,
+    position: pos,
   };
 }
 

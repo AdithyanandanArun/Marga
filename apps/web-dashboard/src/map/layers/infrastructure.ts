@@ -25,34 +25,15 @@ export function createInfrastructureLayer(
   const layers = [];
 
   if (signals.length > 0 && zoom > 13) {
-    layers.push(
-      new ScatterplotLayer({
-        id: 'signals',
-        data: signals,
-        getPosition: () => [0, 0],
-        getRadius: 0,
-        getFillColor: [0, 0, 0, 0],
-        pickable: false,
-        radiusUnits: 'pixels',
-      }),
-    );
 
-    const signalPoints = signals.flatMap((s) =>
-      s.phases.map((p) => ({
-        signal_id: s.signal_id,
-        junction_id: s.junction_id,
-        position: [0, 0] as [number, number],
-        color: SIGNAL_COLORS[p.state] ?? SIGNAL_COLORS.RED,
-        phase_state: p.state,
-      })),
-    );
+    const signalsWithPos = signals.filter((s) => s.position);
 
-    if (signalPoints.length > 0) {
+    if (signalsWithPos.length > 0) {
       layers.push(
         new ScatterplotLayer({
           id: 'signal-indicators',
-          data: signals,
-          getPosition: () => [77.5946 + Math.random() * 0.03 - 0.015, 12.9716 + Math.random() * 0.02 - 0.01] as [number, number],
+          data: signalsWithPos,
+          getPosition: (d: TrafficSignalState) => [d.position!.lon, d.position!.lat] as [number, number],
           getRadius: zoom > 15 ? 8 : 6,
           getFillColor: (d: TrafficSignalState) => {
             const primary = d.phases[0]?.state ?? 'RED';
@@ -64,6 +45,9 @@ export function createInfrastructureLayer(
           filled: true,
           pickable: true,
           radiusUnits: 'pixels',
+          updateTriggers: {
+            getFillColor: signalsWithPos.map((s) => s.phases[0]?.state),
+          },
         }),
       );
     }
