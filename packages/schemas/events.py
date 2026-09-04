@@ -64,6 +64,7 @@ class CanonicalEvent(BaseModel):
         """Wrap a VehicleState as an ACTOR_STATE_UPDATED event."""
         return cls(
             event_type=ACTOR_STATE_UPDATED,
+            schema_version=getattr(vs, "schema_version", "1.0"),
             timestamp_utc=vs.timestamp_utc,
             source=vs.source,
             trace_id=vs.trace_id,
@@ -75,6 +76,7 @@ class CanonicalEvent(BaseModel):
         """Wrap a PedestrianState as an ACTOR_STATE_UPDATED event."""
         return cls(
             event_type=ACTOR_STATE_UPDATED,
+            schema_version=getattr(ps, "schema_version", "1.0"),
             timestamp_utc=ps.timestamp_utc,
             source=ps.source,
             trace_id=ps.trace_id,
@@ -86,6 +88,7 @@ class CanonicalEvent(BaseModel):
         """Wrap an InfrastructureState as an INFRASTRUCTURE_SIGNAL_UPDATED event."""
         return cls(
             event_type=INFRASTRUCTURE_SIGNAL_UPDATED,
+            schema_version=getattr(is_, "schema_version", "1.0"),
             timestamp_utc=is_.timestamp_utc,
             source=is_.source,
             trace_id=str(uuid.uuid4()),
@@ -97,6 +100,7 @@ class CanonicalEvent(BaseModel):
         """Wrap a RoadState as a ROAD_STATE_UPDATED event."""
         return cls(
             event_type=ROAD_STATE_UPDATED,
+            schema_version=getattr(rs, "schema_version", "1.0"),
             timestamp_utc=rs.timestamp_utc,
             source=rs.source,
             trace_id=str(uuid.uuid4()),

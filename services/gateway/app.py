@@ -66,6 +66,9 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Marga gateway starting up")
+    # Mounted applications do not receive an independent lifespan under every
+    # ASGI server, so initialize the safety registry explicitly here.
+    initialize_safety_detectors()
     yield
     logger.info("Marga gateway shutting down")
 
@@ -118,6 +121,21 @@ _try_mount_router("services.hazards.marga_hazards.api", "router", "", "hazards")
 _try_mount_router("services.trust.marga_trust.api", "router", "", "trust")
 _try_mount_router("services.messaging.marga_messaging.api", "router", "", "messaging")
 _try_mount_router("services.alerts.marga_alerts.api", "router", "", "alerts")
+
+# Hrishi's safety service is a FastAPI application (rather than an APIRouter),
+# so mount it at an explicit namespace.  This leaves existing public gateway
+# routes stable while giving every deployment one production import path.
+try:
+    from services.safety_detectors import app as safety_app
+    from services.safety_detectors import initialize as initialize_safety_detectors
+
+    app.mount("/safety", safety_app)
+    logger.info("Mounted safety-detectors service at /safety")
+except ImportError as exc:
+    logger.warning("Safety-detectors service unavailable: %s", exc)
+
+    def initialize_safety_detectors() -> None:
+        return None
 
 
 # ---------------------------------------------------------------------------
