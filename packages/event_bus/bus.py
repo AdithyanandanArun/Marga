@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger("marga.event_bus")
 
@@ -38,7 +39,13 @@ class EventBus:
         try:
             import nats  # type: ignore[import-untyped]
 
-            self._nc = await nats.connect(self._url)
+            # A local demo/test must remain usable when the broker is absent.
+            # Do not let every application lifespan spend seconds reconnecting.
+            self._nc = await nats.connect(
+                self._url,
+                connect_timeout=0.25,
+                max_reconnect_attempts=0,
+            )
             self._js = self._nc.jetstream()
             for stream_name, subjects in _STREAMS:
                 try:

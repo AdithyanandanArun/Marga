@@ -79,10 +79,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from packages.event_bus.bus import EventBus, set_event_bus
 
-        _nats_url = os.environ.get("EVENT_BUS_URL", "nats://localhost:4222")
-        _bus = EventBus(_nats_url)
-        await _bus.connect()
-        set_event_bus(_bus)
+        _nats_url = os.environ.get("EVENT_BUS_URL")
+        if _nats_url:
+            _bus = EventBus(_nats_url)
+            await _bus.connect()
+            set_event_bus(_bus)
     except Exception as exc:
         logger.debug("Event bus not available: %s", exc)
 
@@ -90,10 +91,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from packages.redis_store.actor_ttl import ActorTTLManager, set_ttl_manager
 
-        _redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-        _ttl_mgr = ActorTTLManager(_redis_url)
-        await _ttl_mgr.connect()
-        set_ttl_manager(_ttl_mgr)
+        _redis_url = os.environ.get("REDIS_URL")
+        if _redis_url:
+            _ttl_mgr = ActorTTLManager(_redis_url)
+            await _ttl_mgr.connect()
+            set_ttl_manager(_ttl_mgr)
     except Exception as exc:
         logger.debug("Redis actor TTL not available: %s", exc)
 
@@ -148,6 +150,16 @@ if _otel_available:
 
 
 # ---------------------------------------------------------------------------
+# Gateway-owned canonical contracts must register before optional downstream
+# routers. Otherwise the hazard service's similarly named endpoint shadows the
+# canonical gateway ingestion route.
+from services.gateway.replay import router as _replay_router  # noqa: E402
+from services.gateway.world_state import router as _world_state_router  # noqa: E402
+
+app.include_router(_world_state_router)
+app.include_router(_replay_router)
+
+
 # Service router mounting — guarded imports so the gateway starts even when
 # downstream service packages are not yet implemented.
 # ---------------------------------------------------------------------------
@@ -170,12 +182,6 @@ _try_mount_router("services.hazards.marga_hazards.api", "router", "", "hazards")
 _try_mount_router("services.trust.marga_trust.api", "router", "", "trust")
 _try_mount_router("services.messaging.marga_messaging.api", "router", "", "messaging")
 _try_mount_router("services.alerts.marga_alerts.api", "router", "", "alerts")
-
-from services.gateway.world_state import router as _world_state_router  # noqa: E402
-from services.gateway.replay import router as _replay_router  # noqa: E402
-
-app.include_router(_world_state_router)
-app.include_router(_replay_router)
 
 # Hrishi's safety service is a FastAPI application (rather than an APIRouter),
 # so mount it at an explicit namespace.  This leaves existing public gateway

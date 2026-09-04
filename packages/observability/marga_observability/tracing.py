@@ -52,9 +52,9 @@ def setup_tracing(
         exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
         provider.add_span_processor(BatchSpanProcessor(exporter))
 
-    if console_export or otlp_endpoint is None:
-        # Always add console exporter if no OTLP endpoint is configured,
-        # so that spans are visible during development.
+    if console_export:
+        # Console spans are opt-in: test runners may close their capture stream
+        # before the batch exporter flushes.
         provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
 
     trace.set_tracer_provider(provider)

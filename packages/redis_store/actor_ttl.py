@@ -25,7 +25,12 @@ class ActorTTLManager:
         try:
             import redis.asyncio as aioredis
 
-            self._redis = aioredis.from_url(self._url, decode_responses=True)
+            self._redis = aioredis.from_url(
+                self._url,
+                decode_responses=True,
+                socket_connect_timeout=0.25,
+                socket_timeout=0.25,
+            )
             await self._redis.ping()
             self._connected = True
             logger.info("ActorTTLManager connected to %s", self._url)

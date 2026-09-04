@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -16,7 +16,7 @@ _SCENARIO_URL = os.environ.get("SCENARIO_SERVICE_URL", "http://localhost:8001")
 
 
 @router.get("/runs")
-async def list_replay_runs(scenario_id: Optional[str] = Query(None)) -> list[dict[str, Any]]:
+async def list_replay_runs(scenario_id: str | None = Query(None)) -> list[dict[str, Any]]:
     """List all scenario runs available for replay."""
     params: dict[str, str] = {}
     if scenario_id:
@@ -35,7 +35,7 @@ async def list_replay_runs(scenario_id: Optional[str] = Query(None)) -> list[dic
 async def get_replay_events(
     run_id: str,
     from_s: float = Query(0.0, description="Start sim time (s)"),
-    to_s: Optional[float] = Query(None, description="End sim time (s)"),
+    to_s: float | None = Query(None, description="End sim time (s)"),
     limit: int = Query(5000, le=50_000),
 ) -> dict[str, Any]:
     """Return recorded canonical events for a run, for ReplayView scrubbing."""
