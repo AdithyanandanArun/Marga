@@ -7,6 +7,8 @@ import { createActorLayer } from './layers/actors';
 import { createHazardLayer } from './layers/hazards';
 import { createRiskLayer } from './layers/risks';
 import { createInfrastructureLayer } from './layers/infrastructure';
+import { createTrajectoriesLayer } from './layers/trajectories';
+import { createV2XLinksLayer } from './layers/v2xLinks';
 import { FixturePlayer } from '../net/fixtures';
 
 const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
@@ -44,6 +46,7 @@ export function MapView({ onEntityClick }: MapViewProps) {
   const showHazards = useUIStore((s) => s.showHazards);
   const showRoadEvents = useUIStore((s) => s.showRoadEvents);
   const showRSUs = useUIStore((s) => s.showRSUs);
+  const showV2XLinks = useUIStore((s) => s.showV2XLinks);
 
   const selectedEntityId = useUIStore((s) => s.selectedEntityId);
 
@@ -160,6 +163,8 @@ export function MapView({ onEntityClick }: MapViewProps) {
       ),
       ...(showHazards ? createHazardLayer(Array.from(hazards.values()), zoom) : []),
       ...(showRiskZones ? createRiskLayer(Array.from(risks.values()), vehicles, zoom) : []),
+      ...(showTrajectories ? [createTrajectoriesLayer(Array.from(vehicles.values()))] : []),
+      ...(showV2XLinks ? [createV2XLinksLayer(Array.from(vehicles.values()), Array.from(rsus.values()))] : []),
       ...createInfrastructureLayer(
         showSignals ? Array.from(signals.values()) : [],
         showRoadEvents ? Array.from(roadEvents.values()) : [],
@@ -170,7 +175,7 @@ export function MapView({ onEntityClick }: MapViewProps) {
 
     deckRef.current.setProps({ layers });
   }, [vehicles, pedestrians, hazards, signals, roadEvents, dynamicActors, rsus, risks,
-      showUncertainty, showTrajectories, showRiskZones, showSignals, showHazards, showRoadEvents, showRSUs,
+      showUncertainty, showTrajectories, showRiskZones, showV2XLinks, showSignals, showHazards, showRoadEvents, showRSUs,
       selectedEntityId, viewport.zoom]);
 
   useEffect(() => {
