@@ -11,16 +11,15 @@ RUN apt-get update && \
 # Copy dependency manifests first for layer caching
 COPY pyproject.toml ./
 COPY packages/ ./packages/
+COPY tools/osm-import/ ./tools/osm-import/
+COPY services/ ./services/
 
 # Install all dependencies into a virtual-env we can copy later
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir . && \
-    pip install --no-cache-dir ./packages/schemas ./packages/persistence ./packages/observability
-
-# Copy application source
-COPY services/ ./services/
+    pip install --no-cache-dir . ./packages/schemas ./tools/osm-import \
+        ./packages/persistence ./packages/observability
 
 # ---------- runtime stage ----------
 FROM python:3.12-slim AS runtime

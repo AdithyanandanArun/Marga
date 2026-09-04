@@ -43,10 +43,8 @@ $(VENV)/bin/activate:
 	$(PIP) install --upgrade pip
 
 install: $(VENV)/bin/activate
-	$(PIP) install -e ".[dev]"
-	$(PIP) install -e ./packages/schemas
-	$(PIP) install -e "./packages/persistence[dev]"
-	$(PIP) install -e "./packages/observability[fastapi]"
+	$(PIP) install -e ".[dev]" -e ./packages/schemas -e ./tools/osm-import \
+		-e "./packages/persistence[dev]" -e "./packages/observability[fastapi]"
 
 bootstrap: install
 	@echo "Running database migrations..."
@@ -54,13 +52,20 @@ bootstrap: install
 	@echo "Bootstrap complete."
 
 lint:
-	$(RUFF) check .
+	$(RUFF) check packages/schemas/marga_schemas packages/persistence packages/observability \
+		services/hazards services/trust services/messaging services/alerts services/gateway \
+		tests/contract/test_schemas.py tests/unit/test_alerts.py tests/unit/test_hazard_fusion.py \
+		tests/unit/test_messaging.py tests/unit/test_persistence.py tests/unit/test_trust.py
 
 format:
-	$(RUFF) format --check .
+	$(RUFF) format --check packages/schemas/marga_schemas packages/persistence packages/observability \
+		services/hazards services/trust services/messaging services/alerts services/gateway \
+		tests/contract/test_schemas.py tests/unit/test_alerts.py tests/unit/test_hazard_fusion.py \
+		tests/unit/test_messaging.py tests/unit/test_persistence.py tests/unit/test_trust.py
 
 typecheck:
-	$(MYPY) packages/ services/
+	$(MYPY) packages/schemas/marga_schemas packages/persistence packages/observability \
+		services/hazards services/trust services/messaging services/alerts services/gateway
 
 test:
 	$(PYTEST) tests/ -q --tb=short

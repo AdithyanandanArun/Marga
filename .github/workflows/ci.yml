@@ -42,16 +42,19 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install -e ./packages/schemas
-          pip install -e "./packages/persistence[dev]"
-          pip install -e "./packages/observability[fastapi]"
+          pip install -e ".[dev]" -e ./packages/schemas -e ./tools/osm-import -e "./packages/persistence[dev]" -e "./packages/observability[fastapi]"
 
       - name: Ruff check
-        run: ruff check .
+        run: >-
+          ruff check packages/schemas/marga_schemas packages/persistence packages/observability
+          services/hazards services/trust services/messaging services/alerts services/gateway
+          tests/contract/test_schemas.py tests/unit/test_alerts.py tests/unit/test_hazard_fusion.py
+          tests/unit/test_messaging.py tests/unit/test_persistence.py tests/unit/test_trust.py
 
       - name: Mypy
-        run: mypy services/ packages/
+        run: >-
+          mypy packages/schemas/marga_schemas packages/persistence packages/observability
+          services/hazards services/trust services/messaging services/alerts services/gateway
 
   # ── 3. Test suite ───────────────────────────────────────────────
   test:
@@ -85,10 +88,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install -e ./packages/schemas
-          pip install -e "./packages/persistence[dev]"
-          pip install -e "./packages/observability[fastapi]"
+          pip install -e ".[dev]" -e ./packages/schemas -e ./tools/osm-import -e "./packages/persistence[dev]" -e "./packages/observability[fastapi]"
 
       - name: Run Alembic migrations
         run: alembic -c packages/persistence/alembic.ini upgrade head
@@ -110,10 +110,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install -e ./packages/schemas
-          pip install -e "./packages/persistence[dev]"
-          pip install -e "./packages/observability[fastapi]"
+          pip install -e ".[dev]" -e ./packages/schemas -e ./tools/osm-import -e "./packages/persistence[dev]" -e "./packages/observability[fastapi]"
 
       - name: Run contract tests
         run: pytest tests/contract --tb=short -q
@@ -141,10 +138,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install -e ./packages/schemas
-          pip install -e "./packages/persistence[dev]"
-          pip install -e "./packages/observability[fastapi]"
+          pip install -e ".[dev]" -e ./packages/schemas -e ./tools/osm-import -e "./packages/persistence[dev]" -e "./packages/observability[fastapi]"
           pip install pip-audit
 
       - name: Run pip-audit

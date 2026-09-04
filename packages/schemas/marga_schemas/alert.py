@@ -7,9 +7,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import Field
-
 from marga_schemas.common import EvidenceItem, GeoPoint, SchemaVersioned
+from pydantic import Field
 
 
 class AlertPriority(str, enum.Enum):

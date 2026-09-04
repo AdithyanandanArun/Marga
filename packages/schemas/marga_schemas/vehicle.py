@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field
-
 from marga_schemas.common import ActorType, GeoPoint, SchemaVersioned, Source
+from pydantic import Field
 
 
 class VehicleState(SchemaVersioned):

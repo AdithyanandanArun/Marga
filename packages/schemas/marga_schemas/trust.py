@@ -7,9 +7,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import Field
-
 from marga_schemas.common import SchemaVersioned
+from pydantic import Field
 
 
 class TrustLevel(str, enum.Enum):

@@ -7,9 +7,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
-
 from marga_schemas.common import ConnectivityState, GeoPoint, SchemaVersioned
+from pydantic import BaseModel, Field
 
 
 class MessagePriority(str, enum.Enum):
