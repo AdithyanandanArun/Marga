@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { MapView } from '../map/MapView';
 import { useWorldStore } from '../state/worldStore';
@@ -16,7 +16,21 @@ import {
   Wifi,
   WifiOff,
   ChevronDown,
+  StopCircle,
+  Play,
+  Minus,
+  Plus,
 } from 'lucide-react';
+
+const GATEWAY = '';
+
+async function sendActorCommand(actorId: string, action: string, speedMps?: number) {
+  await fetch(`${GATEWAY}/v1/world-state/actors/${encodeURIComponent(actorId)}/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, speed_mps: speedMps ?? null }),
+  });
+}
 
 export function DriverConsole() {
   const vehicles = useWorldStore((s) => s.vehicles);
@@ -113,6 +127,10 @@ export function DriverConsole() {
             </div>
           )}
 
+          {vehicle && (
+            <CommandPanel vehicleId={selectedVehicleId} speedMps={vehicle.speed_mps} />
+          )}
+
           <div style={driverStyles.alertsSection}>
             <DriverAlerts alerts={vehicleAlerts} />
           </div>
@@ -171,6 +189,45 @@ function VehicleHUD({ vehicle: v }: { vehicle: VehicleState }) {
     </div>
   );
 }
+
+function CommandPanel({ vehicleId, speedMps }: { vehicleId: string; speedMps: number }) {
+  const [sending, setSending] = useState(false);
+
+  const send = useCallback(async (action: string, speed?: number) => {
+    setSending(true);
+    try { await sendActorCommand(vehicleId, action, speed); } finally { setSending(false); }
+  }, [vehicleId]);
+
+  const step = 5 / 3.6; // 5 km/h in m/s
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        Vehicle Commands
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button disabled={sending} onClick={() => send('set_speed', Math.max(0, speedMps - step))} style={cmdStyle}>
+          <Minus size={14} /> 5 km/h
+        </button>
+        <button disabled={sending} onClick={() => send('set_speed', speedMps + step)} style={cmdStyle}>
+          <Plus size={14} /> 5 km/h
+        </button>
+        <button disabled={sending} onClick={() => send('stop')} style={{ ...cmdStyle, color: 'var(--accent-red)' }}>
+          <StopCircle size={14} /> Stop
+        </button>
+        <button disabled={sending} onClick={() => send('resume')} style={{ ...cmdStyle, color: 'var(--accent-green)' }}>
+          <Play size={14} /> Resume
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const cmdStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 4, padding: '6px 10px',
+  background: 'var(--bg-elevated)', border: '1px solid var(--border-primary)',
+  borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)',
+  fontSize: 12, fontWeight: 500, cursor: 'pointer',
+};
 
 function DriverAlerts({ alerts }: { alerts: Alert[] }) {
   const topAlerts = alerts.slice(0, 3);

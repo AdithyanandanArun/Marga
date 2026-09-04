@@ -250,6 +250,49 @@ async def reroute(req: RerouteRequest) -> RerouteResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Actor and signal command endpoints (Driver Console)
+# ---------------------------------------------------------------------------
+
+_signal_overrides: dict[str, dict[str, Any]] = {}
+
+
+class ActorCommandRequest(BaseModel):
+    action: Literal["set_speed", "stop", "resume"]
+    speed_mps: float | None = None
+
+
+@router.post("/v1/world-state/actors/{actor_id}/command")
+async def actor_command(actor_id: str, cmd: ActorCommandRequest) -> dict[str, Any]:
+    """Apply a speed or stop command to an actor in the live world state."""
+    actor = _entities.get(("vehicle", actor_id))
+    if actor is None:
+        raise HTTPException(status_code=404, detail=f"Actor {actor_id!r} not in world state")
+    if cmd.action == "set_speed" and cmd.speed_mps is not None:
+        actor["speed_mps"] = round(max(0.0, float(cmd.speed_mps)), 3)
+    elif cmd.action == "stop":
+        actor["speed_mps"] = 0.0
+    elif cmd.action == "resume":
+        actor["speed_mps"] = 5.0
+    _entities[("vehicle", actor_id)] = actor
+    _notify(_world_delta("delta", [_entity("vehicle", actor_id, actor)]))
+    logger.info("actor_command: actor=%s action=%s speed=%.1f", actor_id, cmd.action, actor.get("speed_mps", 0))
+    return {"actor_id": actor_id, "applied": cmd.action, "speed_mps": actor.get("speed_mps")}
+
+
+class SignalCommandRequest(BaseModel):
+    phase: Literal["RED", "AMBER", "GREEN"]
+    duration_s: float = 30.0
+
+
+@router.post("/v1/world-state/signals/{signal_id}/command")
+async def signal_command(signal_id: str, cmd: SignalCommandRequest) -> dict[str, Any]:
+    """Override a traffic signal phase (operator command)."""
+    _signal_overrides[signal_id] = {"phase": cmd.phase, "duration_s": cmd.duration_s}
+    logger.info("signal_command: signal=%s phase=%s duration=%.0fs", signal_id, cmd.phase, cmd.duration_s)
+    return {"signal_id": signal_id, "applied": cmd.phase, "duration_s": cmd.duration_s}
+
+
 @router.websocket("/v1/world-state/stream")
 async def stream(ws: WebSocket) -> None:
     """Emit WorldDelta snapshots/deltas that the dashboard store can apply."""

@@ -99,14 +99,6 @@ if _otel_available:
 
 
 # ---------------------------------------------------------------------------
-# World-state and canonical ingestion endpoints are gateway-owned contracts.
-# Register them before optional service routers so a downstream implementation
-# cannot shadow a documented gateway path such as /v1/ingest/hazard-observation.
-from services.gateway.world_state import router as _world_state_router  # noqa: E402
-
-app.include_router(_world_state_router)
-
-
 # Service router mounting — guarded imports so the gateway starts even when
 # downstream service packages are not yet implemented.
 # ---------------------------------------------------------------------------
@@ -129,6 +121,12 @@ _try_mount_router("services.hazards.marga_hazards.api", "router", "", "hazards")
 _try_mount_router("services.trust.marga_trust.api", "router", "", "trust")
 _try_mount_router("services.messaging.marga_messaging.api", "router", "", "messaging")
 _try_mount_router("services.alerts.marga_alerts.api", "router", "", "alerts")
+
+from services.gateway.world_state import router as _world_state_router  # noqa: E402
+from services.gateway.replay import router as _replay_router  # noqa: E402
+
+app.include_router(_world_state_router)
+app.include_router(_replay_router)
 
 # Hrishi's safety service is a FastAPI application (rather than an APIRouter),
 # so mount it at an explicit namespace.  This leaves existing public gateway

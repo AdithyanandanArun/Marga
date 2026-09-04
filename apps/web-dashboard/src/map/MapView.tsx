@@ -16,15 +16,20 @@ const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.js
 
 interface MapViewProps {
   onEntityClick?: (entityId: string, entityType: string) => void;
+  onMapClick?: (lat: number, lon: number) => void;
+  placementMode?: boolean;
 }
 
-export function MapView({ onEntityClick }: MapViewProps) {
+export function MapView({ onEntityClick, onMapClick, placementMode = false }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const deckRef = useRef<Deck | null>(null);
   const fixtureRef = useRef<FixturePlayer | null>(null);
   const animRef = useRef<number>(0);
+  const onMapClickRef = useRef(onMapClick);
   const [mapLoaded, setMapLoaded] = useState(false);
+
+  useEffect(() => { onMapClickRef.current = onMapClick; }, [onMapClick]);
 
   const viewport = useUIStore((s) => s.viewport);
   const darkMapStyle = useUIStore((s) => s.darkMapStyle);
@@ -68,6 +73,10 @@ export function MapView({ onEntityClick }: MapViewProps) {
 
     map.on('load', () => {
       setMapLoaded(true);
+    });
+
+    map.on('click', (e) => {
+      onMapClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
     });
 
     map.on('moveend', () => {
@@ -188,6 +197,17 @@ export function MapView({ onEntityClick }: MapViewProps) {
   }, [updateLayers]);
 
   return (
-    <div ref={mapContainer} style={{ width: '100%', height: '100%', position: 'relative' }} />
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <div ref={mapContainer} style={{ width: '100%', height: '100%', cursor: placementMode ? 'crosshair' : undefined }} />
+      {placementMode && (
+        <div style={{
+          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(99,102,241,0.9)', color: '#fff', padding: '6px 16px',
+          borderRadius: 20, fontSize: 12, fontWeight: 600, pointerEvents: 'none', zIndex: 10,
+        }}>
+          Click on map to place actor
+        </div>
+      )}
+    </div>
   );
 }
