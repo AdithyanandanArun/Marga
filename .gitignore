@@ -99,3 +99,5 @@ data/
 *.key
 *.crt
 secrets/
+.serena/
+graphify-out/
