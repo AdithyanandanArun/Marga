@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ── 1. Block forbidden Co-authored-by trailers ──────────────────
+  co-author-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for Co-authored-by trailers
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash infra/scripts/check-coauthor.sh
+
+  # ── 2. Lint & type-check ────────────────────────────────────────
+  lint-and-type:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install -e ./packages/schemas
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Mypy
+        run: mypy services/ packages/ tests/
+
+  # ── 3. Test suite ───────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: marga
+          POSTGRES_PASSWORD: marga
+          POSTGRES_DB: marga
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U marga"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://marga:marga@localhost:5432/marga
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install -e ./packages/schemas
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+        continue-on-error: true  # migrations may not exist yet
+
+      - name: Run tests with coverage
+        run: pytest --tb=short -q --cov=services --cov=packages --cov-report=term-missing
+
+  # ── 4. Schema contract tests ────────────────────────────────────
+  schema-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install -e ./packages/schemas
+
+      - name: Run contract tests
+        run: pytest tests/contract --tb=short -q
+
+  # ── 5. Docker build (no push) ──────────────────────────────────
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t marga-backend:ci-${{ github.sha }} .
+
+  # ── 6. Security audit ──────────────────────────────────────────
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install -e ./packages/schemas
+          pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit
