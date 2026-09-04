@@ -17,7 +17,7 @@ from typing import Callable, Optional
 from pydantic import BaseModel
 
 from .base import SimulationAdapter
-from .schemas import CanonicalEvent, PedestrianState, VehicleState
+from .schemas import CanonicalEvent, DynamicActorObservation, PedestrianState, VehicleState
 
 log = logging.getLogger(__name__)
 
@@ -153,10 +153,16 @@ class SimulationRunner:
                         payload=actor.model_dump(),
                     )
                 )
-            # DynamicActorObservation or unknown types are silently skipped
-            # (they carry no trace_id and we do not want to lose the event)
-            else:
-                pass
+            elif isinstance(actor, DynamicActorObservation):
+                events.append(
+                    CanonicalEvent(
+                        event_type="actor.dynamic.observed",
+                        timestamp_utc=now,
+                        source=actor.source,
+                        trace_id=str(uuid.uuid4()),
+                        payload=actor.model_dump(),
+                    )
+                )
 
         # --- Signal states ---
         for signal in self._adapter.get_signal_states():

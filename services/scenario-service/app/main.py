@@ -11,16 +11,19 @@ All endpoints are versioned under /v1/.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from .config import Settings, get_settings
 from .failure_injector import FailureInjector
+from .mock_sim import run_mock_simulation
 from .scenario_store import RunNotFoundError, ScenarioNotFoundError, ScenarioStore
 from .schemas import (
     FailureScheduleEntry,
@@ -44,13 +47,19 @@ class AppState:
 
     store: ScenarioStore
     injector: FailureInjector
-    # Map run_id -> TimeController for runs that are currently managed
-    # in-process.  In a production deployment this would be offloaded to a
-    # dedicated simulation worker, but for the hackathon we keep it simple.
     controllers: dict[str, TimeController]
+    # Background asyncio Tasks driving mock simulation per run
+    sim_tasks: dict[str, asyncio.Task[None]]
+    # Event sink queues for replay recording: run_id -> Queue of event batches
+    event_queues: dict[str, asyncio.Queue[list[dict[str, Any]]]]
+    # Recorded events for replay: run_id -> list of (sim_time_s, event_batch)
+    recorded_events: dict[str, list[dict[str, Any]]]
 
     def __init__(self) -> None:
         self.controllers = {}
+        self.sim_tasks = {}
+        self.event_queues = {}
+        self.recorded_events = {}
 
 
 _app_state = AppState()
@@ -217,10 +226,46 @@ async def start_run(
     )
     await store.save_run(run)
 
-    # Initialise an in-process time controller for this run.
     controller = TimeController()
     controller.start()
     _app_state.controllers[run.run_id] = controller
+
+    # Spin up mock simulation and replay recorder
+    settings = get_settings()
+    event_q: asyncio.Queue[list[dict[str, Any]]] = asyncio.Queue(maxsize=1024)
+    _app_state.event_queues[run.run_id] = event_q
+    _app_state.recorded_events[run.run_id] = []
+
+    async def _record_events() -> None:
+        """Drain the event queue and append to the replay log with wall-clock timestamps."""
+        started = datetime.now(timezone.utc).timestamp()
+        while True:
+            try:
+                batch = await asyncio.wait_for(event_q.get(), timeout=5.0)
+                sim_time = datetime.now(timezone.utc).timestamp() - started
+                for ev in batch:
+                    _app_state.recorded_events[run.run_id].append(
+                        {"sim_time_s": round(sim_time, 3), **ev}
+                    )
+            except asyncio.TimeoutError:
+                pass
+            except asyncio.CancelledError:
+                break
+
+    async def _run_sim_and_record() -> None:
+        record_task = asyncio.create_task(_record_events())
+        try:
+            await run_mock_simulation(
+                run_id=run.run_id,
+                scenario=scenario,
+                gateway_url=settings.GATEWAY_URL,
+                event_sink=event_q,
+            )
+        finally:
+            record_task.cancel()
+
+    task = asyncio.create_task(_run_sim_and_record())
+    _app_state.sim_tasks[run.run_id] = task
 
     logger.info("Started run %s for scenario %s", run.run_id, scenario_id)
     return run
@@ -318,6 +363,10 @@ async def stop_run(
         final_sim_time = controller.sim_time_s
     else:
         final_sim_time = run.current_sim_time_s
+
+    sim_task = _app_state.sim_tasks.pop(run_id, None)
+    if sim_task and not sim_task.done():
+        sim_task.cancel()
 
     run = run.model_copy(
         update={
@@ -435,4 +484,48 @@ async def inject_failure(
         "failure_type": body.failure_type,
         "start_sim_time_s": start_time,
         "duration_s": body.duration_s,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Replay endpoints (3.5)
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/v1/scenarios/{scenario_id}/runs/{run_id}/events",
+    tags=["replay"],
+)
+async def get_run_events(
+    scenario_id: str,
+    run_id: str,
+    from_s: float = Query(0.0, description="Start sim time (seconds)"),
+    to_s: Optional[float] = Query(None, description="End sim time (seconds, inclusive)"),
+    limit: int = Query(5000, le=50_000),
+    store: ScenarioStore = Depends(get_store),
+) -> dict:
+    """
+    Return recorded canonical events for a run, optionally filtered by sim time window.
+
+    Used by ReplayView to scrub through a past run. Events are stored in-memory
+    during the run and keyed by sim_time_s relative to run start.
+    """
+    run = await store.get_run(run_id)
+    if run is None or run.scenario_id != scenario_id:
+        raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
+
+    all_events = _app_state.recorded_events.get(run_id, [])
+    filtered = [
+        e for e in all_events
+        if e["sim_time_s"] >= from_s and (to_s is None or e["sim_time_s"] <= to_s)
+    ]
+
+    return {
+        "run_id": run_id,
+        "scenario_id": scenario_id,
+        "from_s": from_s,
+        "to_s": to_s,
+        "total_recorded": len(all_events),
+        "returned": min(len(filtered), limit),
+        "events": filtered[:limit],
     }

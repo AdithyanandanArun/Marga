@@ -24,7 +24,7 @@ export class WorldStream {
   constructor(config: StreamConfig = {}) {
     const wsBase = `ws://${window.location.host}`;
     this.config = {
-      worldUrl: config.worldUrl ?? `${wsBase}/v1/stream/world`,
+      worldUrl: config.worldUrl ?? `${wsBase}/v1/world-state/stream`,
       alertUrl: config.alertUrl ?? `${wsBase}/v1/stream/alerts`,
       bbox: config.bbox ?? [77.5, 12.9, 77.7, 13.1],
       detail: config.detail ?? 2,

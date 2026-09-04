@@ -84,8 +84,17 @@ function generateHazard(i: number): Hazard {
   };
 }
 
+// Known Bangalore Central junctions — stable positions, no random drift
+const SIGNAL_POSITIONS = [
+  { lat: 12.9716, lon: 77.5946 }, // MG Road / Brigade Road
+  { lat: 12.9762, lon: 77.6033 }, // Ulsoor junction
+  { lat: 12.9698, lon: 77.5985 }, // Richmond Circle
+  { lat: 12.9784, lon: 77.5916 }, // Cunningham Rd junction
+];
+
 function generateSignal(i: number): TrafficSignalState {
   const states = ['RED', 'AMBER', 'GREEN'] as const;
+  const pos = SIGNAL_POSITIONS[i % SIGNAL_POSITIONS.length];
   return {
     signal_id: `sig-${i.toString().padStart(3, '0')}`,
     junction_id: `jnc-${i}`,
@@ -97,6 +106,7 @@ function generateSignal(i: number): TrafficSignalState {
     controller_mode: 'FIXED',
     source: 'SIMULATION',
     confidence: 0.95,
+    position: pos,
   };
 }
 
@@ -224,13 +234,13 @@ export class FixturePlayer {
   private interval: ReturnType<typeof setInterval> | null = null;
   private tickCount = 0;
 
-  start(vehicleCount = 50, tickMs = 500): void {
+  start(vehicleCount = 20, tickMs = 100): void {
     this.vehicles = Array.from({ length: vehicleCount }, (_, i) => generateVehicle(i));
-    const pedestrians = Array.from({ length: 15 }, (_, i) => generatePedestrian(i));
-    const hazards = Array.from({ length: 8 }, (_, i) => generateHazard(i));
-    const signals = Array.from({ length: 6 }, (_, i) => generateSignal(i));
-    const roadEvents = Array.from({ length: 3 }, (_, i) => generateRoadEvent(i));
-    const dynamicActors = Array.from({ length: 4 }, (_, i) => generateDynamicActor(i));
+    const pedestrians = Array.from({ length: 5 }, (_, i) => generatePedestrian(i));
+    const hazards = Array.from({ length: 3 }, (_, i) => generateHazard(i));
+    const signals = Array.from({ length: 4 }, (_, i) => generateSignal(i));
+    const roadEvents = Array.from({ length: 2 }, (_, i) => generateRoadEvent(i));
+    const dynamicActors = Array.from({ length: 2 }, (_, i) => generateDynamicActor(i));
     const rsus = Array.from({ length: 3 }, (_, i) => generateRSU(i));
 
     const initialEntities: WorldEntity[] = [
@@ -261,16 +271,20 @@ export class FixturePlayer {
     this.tickCount++;
     const now = new Date().toISOString();
 
+    // India urban speed caps (m/s): auto ~8, bike ~6, car ~14, bus ~11, truck ~10
+    const speedCap: Record<string, number> = { CAR: 14, BUS: 11, TRUCK: 10, AUTO: 8, BIKE: 6 };
+
     for (const v of this.vehicles) {
       const headingRad = (v.heading_deg * Math.PI) / 180;
-      const dt = 0.5;
+      const dt = 0.1;  // match SUMO 100 ms step — was 0.5 s which caused teleporting
+      const cap = speedCap[v.actor_type] ?? 12;
+      v.speed_mps = Math.max(0, Math.min(cap, v.speed_mps + (Math.random() - 0.5) * 0.5));
       const dlat = (v.speed_mps * dt * Math.cos(headingRad)) / 111320;
       const dlon = (v.speed_mps * dt * Math.sin(headingRad)) / (111320 * Math.cos((v.position.lat * Math.PI) / 180));
       v.position.lat += dlat;
       v.position.lon += dlon;
-      v.heading_deg = (v.heading_deg + (Math.random() - 0.5) * 3 + 360) % 360;
-      v.speed_mps = Math.max(0, Math.min(30, v.speed_mps + (Math.random() - 0.5) * 2));
-      v.position_uncertainty_m = Math.max(1, v.position_uncertainty_m + (Math.random() - 0.5));
+      v.heading_deg = (v.heading_deg + (Math.random() - 0.5) * 2 + 360) % 360;
+      v.position_uncertainty_m = Math.max(1, v.position_uncertainty_m + (Math.random() - 0.5) * 0.2);
       v.ts = now;
     }
 

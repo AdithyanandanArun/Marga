@@ -16,7 +16,7 @@ from typing import Optional
 
 
 _MIN_MULTIPLIER = 0.1
-_MAX_MULTIPLIER = 10.0
+_MAX_MULTIPLIER = 4.0   # cap at 4× real time; faster causes detector false-negatives
 
 
 class TimeControlError(Exception):
@@ -84,7 +84,7 @@ class TimeController:
         if not _MIN_MULTIPLIER <= multiplier <= _MAX_MULTIPLIER:
             raise TimeControlError(
                 f"Speed multiplier must be between {_MIN_MULTIPLIER} and "
-                f"{_MAX_MULTIPLIER}, got {multiplier}"
+                f"{_MAX_MULTIPLIER} (max 4× real time), got {multiplier}"
             )
         if not self._paused:
             self._flush()

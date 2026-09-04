@@ -1,9 +1,9 @@
-import { ScatterplotLayer, GeoJsonLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, GeoJsonLayer, TextLayer } from '@deck.gl/layers';
 import type { TrafficSignalState, RoadEvent, RSUState } from '../../types/canonical';
 
 const SIGNAL_COLORS: Record<string, [number, number, number]> = {
   RED: [239, 68, 68],
-  AMBER: [234, 179, 8],
+  AMBER: [245, 158, 11],
   GREEN: [34, 197, 94],
 };
 
@@ -24,48 +24,69 @@ export function createInfrastructureLayer(
 ) {
   const layers = [];
 
-  if (signals.length > 0 && zoom > 13) {
-    layers.push(
-      new ScatterplotLayer({
-        id: 'signals',
-        data: signals,
-        getPosition: () => [0, 0],
-        getRadius: 0,
-        getFillColor: [0, 0, 0, 0],
-        pickable: false,
-        radiusUnits: 'pixels',
-      }),
-    );
+  if (signals.length > 0 && zoom >= 12) {
+    const signalsWithPos = signals.filter((s) => s.position);
 
-    const signalPoints = signals.flatMap((s) =>
-      s.phases.map((p) => ({
-        signal_id: s.signal_id,
-        junction_id: s.junction_id,
-        position: [0, 0] as [number, number],
-        color: SIGNAL_COLORS[p.state] ?? SIGNAL_COLORS.RED,
-        phase_state: p.state,
-      })),
-    );
+    if (signalsWithPos.length > 0) {
+      const dotRadius = zoom > 15 ? 12 : zoom > 13 ? 9 : 7;
 
-    if (signalPoints.length > 0) {
+      // Dark housing ring — makes it look like a mounted signal box
       layers.push(
         new ScatterplotLayer({
-          id: 'signal-indicators',
-          data: signals,
-          getPosition: () => [77.5946 + Math.random() * 0.03 - 0.015, 12.9716 + Math.random() * 0.02 - 0.01] as [number, number],
-          getRadius: zoom > 15 ? 8 : 6,
+          id: 'signal-housing',
+          data: signalsWithPos,
+          getPosition: (d: TrafficSignalState) => [d.position!.lon, d.position!.lat],
+          getRadius: dotRadius + 3,
+          getFillColor: [30, 30, 30, 220],
+          getLineColor: [80, 80, 80, 180],
+          lineWidthMinPixels: 1,
+          stroked: true,
+          filled: true,
+          pickable: false,
+          radiusUnits: 'pixels',
+        }),
+      );
+
+      // Colored lens — active phase color
+      layers.push(
+        new ScatterplotLayer({
+          id: 'signal-lens',
+          data: signalsWithPos,
+          getPosition: (d: TrafficSignalState) => [d.position!.lon, d.position!.lat],
+          getRadius: dotRadius,
           getFillColor: (d: TrafficSignalState) => {
-            const primary = d.phases[0]?.state ?? 'RED';
-            return SIGNAL_COLORS[primary] ?? SIGNAL_COLORS.RED;
+            const phase = d.phases[0]?.state ?? 'RED';
+            return [...(SIGNAL_COLORS[phase] ?? SIGNAL_COLORS.RED), 255] as [number, number, number, number];
           },
-          getLineColor: [255, 255, 255, 100],
+          getLineColor: [255, 255, 255, 60],
           lineWidthMinPixels: 1,
           stroked: true,
           filled: true,
           pickable: true,
           radiusUnits: 'pixels',
+          updateTriggers: {
+            getFillColor: signalsWithPos.map((s) => s.phases[0]?.state),
+          },
         }),
       );
+
+      // Phase letter label when zoomed well in
+      if (zoom > 14) {
+        layers.push(
+          new TextLayer({
+            id: 'signal-labels',
+            data: signalsWithPos,
+            getPosition: (d: TrafficSignalState) => [d.position!.lon, d.position!.lat],
+            getText: (d: TrafficSignalState) => d.phases[0]?.state?.charAt(0) ?? 'R',
+            getSize: 11,
+            getColor: [255, 255, 255, 230],
+            getTextAnchor: 'middle',
+            getAlignmentBaseline: 'center',
+            fontFamily: 'monospace',
+            fontWeight: 'bold',
+          }),
+        );
+      }
     }
   }
 
