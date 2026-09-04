@@ -1,0 +1,45 @@
+"""Canonical domain schemas for Marga V2X platform."""
+
+from packages.schemas.canonical import (
+    ActorType,
+    Alert,
+    AlertLevel,
+    AlertStatus,
+    DynamicActorObservation,
+    Hazard,
+    HazardState,
+    HazardType,
+    InfrastructureState,
+    PedestrianState,
+    Position,
+    RiskEvent,
+    RiskType,
+    RoadState,
+    SignalPriorityRequest,
+    SourceType,
+    TrafficSignalState,
+    VehicleState,
+)
+from packages.schemas.events import EventEnvelope
+
+__all__ = [
+    "ActorType",
+    "Alert",
+    "AlertLevel",
+    "AlertStatus",
+    "DynamicActorObservation",
+    "EventEnvelope",
+    "Hazard",
+    "HazardState",
+    "HazardType",
+    "InfrastructureState",
+    "PedestrianState",
+    "Position",
+    "RiskEvent",
+    "RiskType",
+    "RoadState",
+    "SignalPriorityRequest",
+    "SourceType",
+    "TrafficSignalState",
+    "VehicleState",
+]
