@@ -1,0 +1,96 @@
+{
+  "schema_version": "1.0",
+  "scenario_id": "f7c91e33-8a05-4d17-b662-9e1a3c8d2f47",
+  "name": "NH-44 Highway Fog Incident",
+  "description": "Winter morning fog on NH-44 (Bengaluru-Hyderabad highway) with near-zero visibility. A wrong-way vehicle enters the highway after a U-turn at a restricted section, and RSU coverage drops due to a relay failure. Tests the V2X system's ability to propagate emergency warnings under degraded sensor and connectivity conditions.",
+  "osm_region": "nh44_krishnagiri_section",
+  "seed": 98765,
+  "duration_s": 420.0,
+  "traffic_composition": {
+    "car_fraction": 0.35,
+    "truck_fraction": 0.38,
+    "bus_fraction": 0.12,
+    "motorcycle_fraction": 0.08,
+    "auto_rickshaw_fraction": 0.04,
+    "bicycle_fraction": 0.01,
+    "pedestrian_density": 0.05
+  },
+  "environment": {
+    "time_of_day_s": 21600.0,
+    "visibility_m": 80.0,
+    "precipitation": "fog",
+    "road_wetness": 0.6,
+    "wind_speed_mps": 0.8
+  },
+  "failure_schedule": [
+    {
+      "entry_id": "f7c91e33-0001-4abc-8def-000000000001",
+      "failure_type": "weather_visibility",
+      "start_sim_time_s": 0.0,
+      "duration_s": null,
+      "parameters": {
+        "visibility_m": 80.0,
+        "condition": "fog",
+        "reason": "Dense winter fog bank; visibility drops below 100m"
+      }
+    },
+    {
+      "entry_id": "f7c91e33-0002-4abc-8def-000000000002",
+      "failure_type": "wrong_way_vehicle",
+      "start_sim_time_s": 90.0,
+      "duration_s": 180.0,
+      "parameters": {
+        "edge_id": "nh44_km_247_northbound",
+        "vehicle_type": "truck",
+        "reason": "Truck driver missed exit and reversed on highway shoulder"
+      }
+    },
+    {
+      "entry_id": "f7c91e33-0003-4abc-8def-000000000003",
+      "failure_type": "rsu_failure",
+      "start_sim_time_s": 60.0,
+      "duration_s": 240.0,
+      "parameters": {
+        "rsu_id": "rsu_nh44_km_245",
+        "reason": "Power fluctuation caused relay reboot; 4-minute outage"
+      }
+    },
+    {
+      "entry_id": "f7c91e33-0004-4abc-8def-000000000004",
+      "failure_type": "connectivity_loss",
+      "start_sim_time_s": 60.0,
+      "duration_s": 240.0,
+      "parameters": {
+        "affected_services": ["world_state", "alerts"],
+        "reason": "RSU rsu_nh44_km_245 offline — no relay for this highway segment"
+      }
+    },
+    {
+      "entry_id": "f7c91e33-0005-4abc-8def-000000000005",
+      "failure_type": "gps_degradation",
+      "start_sim_time_s": 0.0,
+      "duration_s": null,
+      "parameters": {
+        "uncertainty_m": 25.0,
+        "affected_actors": ["all"],
+        "reason": "Fog scatter degrades GPS signal quality"
+      }
+    },
+    {
+      "entry_id": "f7c91e33-0006-4abc-8def-000000000006",
+      "failure_type": "stalled_vehicle",
+      "start_sim_time_s": 200.0,
+      "duration_s": 120.0,
+      "parameters": {
+        "edge_id": "nh44_km_249_northbound",
+        "vehicle_type": "bus",
+        "lane": 1,
+        "reason": "Bus broke down in fast lane; hazard lights only"
+      }
+    }
+  ],
+  "sumo_net_file": null,
+  "sumo_route_file": null,
+  "tags": ["highway", "nh44", "fog", "night", "wrong-way", "rsu-failure", "india", "critical"],
+  "created_at": "2026-09-04T00:00:00+00:00"
+}
