@@ -16,6 +16,8 @@ import importlib
 import importlib.util
 import logging
 import sys
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -128,13 +130,24 @@ _alert_prioritizer: Any = None  # AlertPrioritizer instance (SafetyPolicy)
 _hazard_fusion_engine: Any = None  # HazardFusionEngine instance
 _config: PolicyConfig = PolicyConfig()
 
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+    logger.info("Starting Marga Safety Detectors Service")
+    _init_all()
+    yield
+
+
 app = FastAPI(
     title="Marga Safety Detectors Service",
     version="0.1.0",
     description="Safety feature evaluation, alert generation, and hazard fusion for the Marga V2X platform.",
+    lifespan=lifespan,
 )
 
 
@@ -216,17 +229,6 @@ def _init_all(config: PolicyConfig | None = None) -> None:
     total = len(DETECTOR_MODULES) + len(AUXILIARY_MODULES)
     loaded = len(_detectors) + (1 if _alert_prioritizer else 0) + (1 if _hazard_fusion_engine else 0)
     logger.info("Initialization complete: %d/%d components loaded", loaded, total)
-
-
-# ---------------------------------------------------------------------------
-# Startup / shutdown
-# ---------------------------------------------------------------------------
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    logger.info("Starting Marga Safety Detectors Service")
-    _init_all()
 
 
 # ---------------------------------------------------------------------------

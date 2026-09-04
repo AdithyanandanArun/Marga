@@ -122,6 +122,10 @@ _try_mount_router("services.trust.marga_trust.api", "router", "", "trust")
 _try_mount_router("services.messaging.marga_messaging.api", "router", "", "messaging")
 _try_mount_router("services.alerts.marga_alerts.api", "router", "", "alerts")
 
+from services.gateway.world_state import router as _world_state_router  # noqa: E402
+
+app.include_router(_world_state_router)
+
 # Hrishi's safety service is a FastAPI application (rather than an APIRouter),
 # so mount it at an explicit namespace.  This leaves existing public gateway
 # routes stable while giving every deployment one production import path.
