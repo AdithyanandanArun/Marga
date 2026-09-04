@@ -47,16 +47,15 @@ function eventToVehicle(ev: RecordedEvent): VehicleState | null {
   const actorId = (p.vehicle_id ?? p.actor_id) as string | undefined;
   if (!actorId) return null;
   return {
+    schema_version: '1.0',
     actor_id: actorId,
     actor_type: ((p.vehicle_type ?? p.actor_type ?? 'CAR') as string).toUpperCase() as VehicleState['actor_type'],
     ts: (p.timestamp_utc ?? new Date().toISOString()) as string,
     position: { lat: pos.lat, lon: pos.lon },
     position_uncertainty_m: (pos.uncertainty_m as number | undefined) ?? 2.0,
     speed_mps: (p.speed_mps as number) ?? 0,
-    acceleration_mps2: (p.acceleration_mps2 as number | undefined) ?? null,
+    acceleration_mps2: (p.acceleration_mps2 as number | undefined),
     heading_deg: (p.heading_deg as number) ?? 0,
-    road_segment_id: null,
-    lane_id: null,
     source: 'SIMULATION',
     capabilities: [],
   };

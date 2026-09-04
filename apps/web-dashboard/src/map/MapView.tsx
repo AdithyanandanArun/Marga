@@ -9,7 +9,6 @@ import { createRiskLayer } from './layers/risks';
 import { createInfrastructureLayer } from './layers/infrastructure';
 import { createTrajectoriesLayer } from './layers/trajectories';
 import { createV2XLinksLayer } from './layers/v2xLinks';
-import { FixturePlayer } from '../net/fixtures';
 
 const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
@@ -24,7 +23,6 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const deckRef = useRef<Deck | null>(null);
-  const fixtureRef = useRef<FixturePlayer | null>(null);
   const animRef = useRef<number>(0);
   const onMapClickRef = useRef(onMapClick);
   const [mapLoaded, setMapLoaded] = useState(false);
@@ -136,21 +134,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
 
     deckRef.current = deck;
 
-    // Only start the fixture demo if the real backend WebSocket delivers no
-    // vehicles within 3 s. This keeps demo mode working offline while letting
-    // the live WS take precedence when the gateway is running.
-    const demoTimer = setTimeout(() => {
-      if (useWorldStore.getState().vehicles.size === 0 && !fixtureRef.current) {
-        const fixture = new FixturePlayer();
-        fixture.start(); // defaults: 20 vehicles, 100 ms ticks
-        fixtureRef.current = fixture;
-      }
-    }, 3000);
-
     return () => {
-      clearTimeout(demoTimer);
-      fixtureRef.current?.stop();
-      fixtureRef.current = null;
       cancelAnimationFrame(animRef.current);
       deck.finalize();
       map.remove();
@@ -172,7 +156,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
       ),
       ...(showHazards ? createHazardLayer(Array.from(hazards.values()), zoom) : []),
       ...(showRiskZones ? createRiskLayer(Array.from(risks.values()), vehicles, zoom) : []),
-      ...(showTrajectories ? [createTrajectoriesLayer(Array.from(vehicles.values()))] : []),
+      ...(showTrajectories ? [createTrajectoriesLayer(Array.from(vehicles.values()), Array.from(risks.values())[0]?.affected_actor_ids)] : []),
       ...(showV2XLinks ? [createV2XLinksLayer(Array.from(vehicles.values()), Array.from(rsus.values()))] : []),
       ...createInfrastructureLayer(
         showSignals ? Array.from(signals.values()) : [],
@@ -206,6 +190,19 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
           borderRadius: 20, fontSize: 12, fontWeight: 600, pointerEvents: 'none', zIndex: 10,
         }}>
           Click on map to place actor
+        </div>
+      )}
+      {mapLoaded && vehicles.size === 0 && !placementMode && (
+        <div style={{
+          position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
+          width: 280, padding: 20, borderRadius: 12, textAlign: 'center',
+          background: 'rgba(15, 17, 23, 0.9)', border: '1px solid rgba(255, 255, 255, 0.14)',
+          color: 'var(--text-primary)', pointerEvents: 'none', zIndex: 2,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.8 }}>WAITING FOR ROAD TELEMETRY</div>
+          <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+            Start a verified scenario or connect the gateway. Marga does not invent traffic or safety alerts.
+          </div>
         </div>
       )}
     </div>

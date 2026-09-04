@@ -1,4 +1,4 @@
-import { ScatterplotLayer, LineLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, LineLayer, TextLayer } from '@deck.gl/layers';
 import type { RiskEvent, VehicleState } from '../../types/canonical';
 
 const RISK_COLORS: Record<string, [number, number, number, number]> = {
@@ -29,9 +29,14 @@ export function createRiskLayer(
   if (zoom < 12 || risks.length === 0) return [];
 
   const lines: RiskLine[] = [];
-  const midpoints: { risk_id: string; position: [number, number]; severity: number }[] = [];
+  const midpoints: { risk_id: string; position: [number, number]; severity: number; ttc: number }[] = [];
 
-  for (const risk of risks) {
+  // The overview tells one safety story. Detailed multi-risk inspection is
+  // intentionally kept in the advanced panel instead of drawing a web.
+  const primaryRisk = [...risks].sort(
+    (a, b) => b.risk_score - a.risk_score || a.time_to_conflict_s - b.time_to_conflict_s,
+  )[0];
+  for (const risk of primaryRisk ? [primaryRisk] : []) {
     if (risk.affected_actor_ids.length < 2) continue;
     const a = vehicles.get(risk.affected_actor_ids[0]);
     const b = vehicles.get(risk.affected_actor_ids[1]);
@@ -52,6 +57,7 @@ export function createRiskLayer(
       risk_id: risk.risk_id,
       position: [(source[0] + target[0]) / 2, (source[1] + target[1]) / 2],
       severity: risk.severity,
+      ttc: risk.time_to_conflict_s,
     });
   }
 
@@ -78,9 +84,25 @@ export function createRiskLayer(
         id: 'risk-midpoints',
         data: midpoints,
         getPosition: (d: { position: [number, number] }) => d.position,
-        getRadius: 8,
+        getRadius: 11,
         getFillColor: (d: { severity: number }) => riskColor(d.severity),
         radiusUnits: 'pixels',
+        pickable: false,
+      }),
+    );
+    layers.push(
+      new TextLayer({
+        id: 'risk-conflict-label',
+        data: midpoints,
+        getPosition: (d: { position: [number, number] }) => d.position,
+        getText: (d: { ttc: number }) => `CONFLICT · ${d.ttc.toFixed(1)}s`,
+        getColor: [255, 255, 255, 235],
+        getSize: 11,
+        sizeUnits: 'pixels',
+        getTextAnchor: 'middle',
+        getAlignmentBaseline: 'bottom',
+        getPixelOffset: [0, -13],
+        billboard: true,
         pickable: false,
       }),
     );

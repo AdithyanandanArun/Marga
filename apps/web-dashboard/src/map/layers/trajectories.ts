@@ -2,8 +2,11 @@ import { PathLayer } from '@deck.gl/layers';
 import type { VehicleState } from '../../types/canonical';
 
 const metersPerDegree = 111_320;
-export function createTrajectoriesLayer(vehicles: VehicleState[]) {
-  const paths = vehicles.map((vehicle) => {
+export function createTrajectoriesLayer(vehicles: VehicleState[], focusActorIds?: string[]) {
+  const focused = focusActorIds?.length
+    ? vehicles.filter((vehicle) => focusActorIds.includes(vehicle.actor_id))
+    : vehicles;
+  const paths = focused.map((vehicle) => {
     const heading = vehicle.heading_deg * Math.PI / 180;
     const points = [0, 1, 2, 3].map((seconds) => {
       const distance = vehicle.speed_mps * seconds;
