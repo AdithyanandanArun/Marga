@@ -1,7 +1,12 @@
 import type { TrafficSignalState, VehicleState } from '../types/canonical';
 import { localPoint, type Point } from './geometry';
 import { buildJunction, type JunctionDefinition, type JunctionType } from './junctionDefs';
-import { JunctionSimEngine, type SimulationIncident } from './vehicleEngine';
+import { JunctionSimEngine, type SignalTopologyPayload, type SimulationIncident } from './vehicleEngine';
+import type { BodyPose } from './vehicleBody';
+
+/** Two junctions can only share tarmac when their centres are within roughly
+ * two arm lengths; anything further cannot produce a body conflict. */
+const NEIGHBOUR_REACH_M = 500;
 
 /** A small connected road district. Each branch joins the central cross at
  * its road endpoints, so this is one navigable visual network, not a grid of
@@ -54,6 +59,23 @@ export class JunctionNetworkEngine {
     this.rebuild(vehicleCount);
   }
 
+  /** Topologies for every signalised junction, for RL controller registration. */
+  signalTopologies(): SignalTopologyPayload[] {
+    return this.engines
+      .map((engine) => engine.signalTopology())
+      .filter((topology): topology is SignalTopologyPayload => topology !== null);
+  }
+
+  /**
+   * Apply one safety-approved RL action addressed by signal_id.
+   * Returns false when no junction owns that signal, so an unroutable command
+   * is reported rather than silently discarded.
+   */
+  applySignalAction(signalId: string, action: string): boolean {
+    const engine = this.engines.find((candidate) => candidate.signalTopology()?.signal_id === signalId);
+    return engine ? engine.applySignalAction(action) : false;
+  }
+
   tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[]; incidents: SimulationIncident[]; despawnedActorIds: string[] } {
     const frames = this.engines.map((engine) => engine.tick(dtMs));
     for (const [sourceIndex, frame] of frames.entries()) {
@@ -80,6 +102,30 @@ export class JunctionNetworkEngine {
     );
   }
 
+  /** Bodies belonging to every other junction engine. Only neighbours whose
+   * road network can actually touch this one are considered, so the seam check
+   * stays cheap as the district grows. */
+  private neighbourBodies(engine: JunctionSimEngine): BodyPose[] {
+    const bodies: BodyPose[] = [];
+    const own = this.centreOf(engine);
+    for (const other of this.engines) {
+      if (other === engine) continue;
+      const centre = this.centreOf(other);
+      const spacingM = Math.hypot(
+        (centre[0] - own[0]) * 111_320 * Math.cos(own[1] * Math.PI / 180),
+        (centre[1] - own[1]) * 111_320,
+      );
+      if (spacingM > NEIGHBOUR_REACH_M) continue;
+      bodies.push(...other.bodies());
+    }
+    return bodies;
+  }
+
+  private centreOf(engine: JunctionSimEngine): Point {
+    const index = this.engines.indexOf(engine);
+    return this.network.junctions[index].center;
+  }
+
   private rebuild(vehicleCount: number): void {
     const base = Math.floor(vehicleCount / this.network.junctions.length);
     const remainder = vehicleCount % this.network.junctions.length;
@@ -90,5 +136,12 @@ export class JunctionNetworkEngine {
       actorIdPrefix: `network-${NETWORK_LAYOUT[index].id}`,
       junctionId: `network-${NETWORK_LAYOUT[index].id}`,
     }));
+    // Adjacent junctions share an arm tip exactly (220 m arms, 440 m spacing),
+    // so vehicles from two engines can occupy the same tarmac at a handover
+    // point. Without this each engine only sees its own vehicles and lets them
+    // pass through each other at the seam.
+    for (const engine of this.engines) {
+      engine.setExternalBodies(() => this.neighbourBodies(engine));
+    }
   }
 }

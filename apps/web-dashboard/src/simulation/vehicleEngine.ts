@@ -69,6 +69,22 @@ export interface TransferredVehicle {
   position: Point;
 }
 
+/** Canonical `SignalJunctionTopology` payload published to the RL controller. */
+export interface SignalTopologyPayload {
+  junction_id: string;
+  signal_id: string;
+  approaches: Array<{
+    movement_id: string;
+    incoming_edge_ids: string[];
+    downstream_edge_ids: string[];
+    approach_length_m: number;
+  }>;
+  phase_index_by_name: Record<string, number>;
+  phase_count: number;
+  default_phase_duration_s: number;
+  source: string;
+}
+
 export interface EngineOptions {
   junction: JunctionDefinition;
   vehicleCount: number;
@@ -100,6 +116,10 @@ export class JunctionSimEngine {
   private nextId = 0;
   private pendingSpawns = 0;
   private externalBodies: () => BodyPose[] = () => [];
+  /** Shifts the fixed-time signal cycle so an applied RL action changes the
+   * phase actually shown to traffic. Negative values hold the current phase
+   * longer; positive values bring the next phase forward. */
+  private signalOffsetMs = 0;
 
   setExternalBodies(provider: () => BodyPose[]): void { this.externalBodies = provider; }
   bodies(): BodyPose[] { return this.vehicles.map(v => this.pose(v)); }
@@ -109,10 +129,30 @@ export class JunctionSimEngine {
   private clearBody(body: BodyPose, margin = 0.3): boolean {
     return ![...this.bodies(), ...this.externalBodies()].some(other => other.id !== body.id && bodiesOverlap(body, other, margin));
   }
+  /** Ids this pose overlaps. `bodiesOverlap` inflates both bodies, so the
+   * effective separation is twice `margin`. */
+  private overlappingIds(body: BodyPose, margin: number): Set<string> {
+    const hits = new Set<string>();
+    for (const other of [...this.bodies(), ...this.externalBodies()]) {
+      if (other.id !== body.id && bodiesOverlap(body, other, margin)) hits.add(other.id);
+    }
+    return hits;
+  }
   private nextIncidentId = 0;
 
   private static readonly STALL_ACCIDENT_MS = 12_000;
   private static readonly ACCIDENT_CLEARANCE_MS = 6_000;
+  /** Per-body inflation for the movement sweep, so the real gap enforced is
+   * twice this. Car-following owns comfortable headway (3-5 m); this guard
+   * only has to stop bodies visibly intersecting, and a larger value makes
+   * dense-but-legal Indian traffic refuse to move. */
+  private static readonly SWEEP_MARGIN_M = 0.05;
+  /** Radius around the junction centre treated as "inside the intersection":
+   * comfortably outside the 22 m roundabout ring and the 16 m junction box. */
+  private static readonly CONFLICT_ZONE_R_M = 26;
+  /** Minimum heading difference for two vehicles to count as crossing rather
+   * than following. Below this, car-following owns the spacing. */
+  private static readonly CROSSING_CONFLICT_MIN_DEG = 30;
 
   constructor(opts: EngineOptions) {
     this.junction = opts.junction;
@@ -130,6 +170,7 @@ export class JunctionSimEngine {
     this.junction = junction;
     this.vehicles = [];
     this.clockMs = 0;
+    this.signalOffsetMs = 0;
     this.setVehicleCount(vehicleCount);
   }
 
@@ -182,15 +223,99 @@ export class JunctionSimEngine {
       && distanceMeters(position, this.positionFor(other), this.junction.center[1]) < clearanceM);
   }
 
+  /** Position within the signal cycle after any externally applied action. */
+  private signalCycleMs(): number {
+    const sig = this.junction.signal;
+    if (!sig) return 0;
+    const cycle = sig.greenMs * 2 + sig.allRedMs * 2;
+    return ((this.clockMs + this.signalOffsetMs) % cycle + cycle) % cycle;
+  }
+
   private signalPhase(): 'A' | 'B' | 'NONE' {
     const sig = this.junction.signal;
     if (!sig) return 'A';
-    const cycle = sig.greenMs * 2 + sig.allRedMs * 2;
-    const t = this.clockMs % cycle;
+    const t = this.signalCycleMs();
     if (t < sig.greenMs) return 'A';
     if (t < sig.greenMs + sig.allRedMs) return 'NONE';
     if (t < sig.greenMs * 2 + sig.allRedMs) return 'B';
     return 'NONE';
+  }
+
+  /** True when this junction is signalised and can accept RL actions. */
+  hasSignal(): boolean {
+    return Boolean(this.junction.signal);
+  }
+
+  /**
+   * Canonical signal topology for this junction, or null when unsignalised.
+   *
+   * Approach edge IDs are the same `road_segment_id` values published with
+   * vehicle telemetry, so the RL controller reads live graph evidence for the
+   * exact edges this junction controls rather than a guessed mapping.
+   */
+  signalTopology(): SignalTopologyPayload | null {
+    if (!this.junction.signal) return null;
+    const groups: Array<{ movement: string; control: string }> = [
+      { movement: 'A', control: 'SIGNAL_GROUP_A' },
+      { movement: 'B', control: 'SIGNAL_GROUP_B' },
+    ];
+    const approaches = groups
+      .map(({ movement, control }) => ({
+        movement_id: movement,
+        incoming_edge_ids: this.junction.routes
+          .filter((route) => route.control === control)
+          .map((route) => `${this.junctionId}:${route.id}`),
+        downstream_edge_ids: [],
+        approach_length_m: 100,
+      }))
+      .filter((approach) => approach.incoming_edge_ids.length > 0);
+    if (approaches.length === 0) return null;
+
+    return {
+      junction_id: this.junctionId,
+      signal_id: `${this.junctionId}-signal-a`,
+      approaches,
+      phase_index_by_name: { A: 0, B: 1 },
+      phase_count: 2,
+      default_phase_duration_s: this.junction.signal.greenMs / 1000,
+      source: 'junction-network-simulator',
+    };
+  }
+
+  /**
+   * Apply one safety-approved RL action to the live cycle.
+   *
+   * EXTEND_GREEN_* holds the current phase for the requested extra seconds.
+   * NEXT_PHASE jumps to the next cycle boundary. HOLD is intentionally a
+   * no-op. Returns false when the action cannot apply, so the caller can
+   * report a real failure instead of silently dropping the command.
+   */
+  applySignalAction(action: string): boolean {
+    const sig = this.junction.signal;
+    if (!sig) return false;
+    if (action === 'HOLD') return true;
+
+    if (action === 'EXTEND_GREEN_5' || action === 'EXTEND_GREEN_10') {
+      const extendMs = action === 'EXTEND_GREEN_5' ? 5_000 : 10_000;
+      this.signalOffsetMs -= extendMs;
+      return true;
+    }
+
+    if (action === 'NEXT_PHASE') {
+      const cycle = sig.greenMs * 2 + sig.allRedMs * 2;
+      const boundaries = [
+        sig.greenMs,
+        sig.greenMs + sig.allRedMs,
+        sig.greenMs * 2 + sig.allRedMs,
+        cycle,
+      ];
+      const t = this.signalCycleMs();
+      const next = boundaries.find((boundary) => boundary > t) ?? cycle;
+      this.signalOffsetMs += next - t;
+      return true;
+    }
+
+    return false;
   }
 
   private gateOpen(): boolean {
@@ -396,6 +521,14 @@ export class JunctionSimEngine {
       for (let j = i + 1; j < this.vehicles.length; j++) {
         const second = this.vehicles[j];
         if (first.route.id === second.route.id) continue;
+        // Vehicles travelling the same way are a following pair, not a
+        // crossing conflict, and car-following already owns their spacing.
+        // Each roundabout arm pairing is its own route id, so without this the
+        // 22 m ring reads every follower as a conflict and makes the leader
+        // brake for the vehicle behind it, throttling the whole circulation.
+        const headingGap = Math.abs(((first.sampled.headingAt(first.progress)
+          - second.sampled.headingAt(second.progress) + 540) % 360) - 180);
+        if (headingGap < JunctionSimEngine.CROSSING_CONFLICT_MIN_DEG) continue;
         let conflictAt: number | null = null;
         for (let t = 0; t <= horizonS; t += stepS) {
           const firstProgress = Math.min(1, first.progress + (first.speed * t) / first.sampled.totalLength);
@@ -406,11 +539,43 @@ export class JunctionSimEngine {
           }
         }
         if (conflictAt === null) continue;
-        // Both paths occupy the same point in the same prediction slice; a
-        // stable priority choice avoids the "both yield, then both go"
-        // oscillation that produces unrealistic intersection deadlocks.
-        const yielding = first.id > second.id ? first : second;
-        const distanceBeforeConflict = Math.max(0, yielding.speed * conflictAt - 5.5);
+        // Priority belongs to whoever reaches the conflict point first, with
+        // actor id only as a stable tie-break. Deciding purely by id starves
+        // the highest id: on a shared roundabout ring it yields to every peer
+        // and never moves again.
+        //
+        // The permitted distance must come from the geometry, not from the
+        // yielder's own speed. `speed * conflictAt - 5.5` latches at zero —
+        // a stopped vehicle is allowed to travel 0 m, so its target speed
+        // stays 0 and it can never restart. A vehicle already inside the
+        // conflict zone has distance 0, which now makes it the priority
+        // vehicle so it clears the zone instead of being held inside it.
+        const firstDistance = first.speed * conflictAt;
+        const secondDistance = second.speed * conflictAt;
+        // Traffic already inside the junction outranks traffic still
+        // approaching it, so a vehicle can always clear the box it occupies.
+        // This is the roundabout give-way rule — circulating before entering —
+        // and it is also what stops a cross or T junction from locking up with
+        // vehicles stranded across it.
+        const centerLat = this.junction.center[1];
+        const firstInside = distanceMeters(this.positionFor(first), this.junction.center, centerLat)
+          < JunctionSimEngine.CONFLICT_ZONE_R_M;
+        const secondInside = distanceMeters(this.positionFor(second), this.junction.center, centerLat)
+          < JunctionSimEngine.CONFLICT_ZONE_R_M;
+        const firstYields = firstInside !== secondInside
+          ? !firstInside
+          : firstDistance !== secondDistance
+            ? firstDistance > secondDistance
+            : first.id > second.id;
+        const yielding = firstYields ? first : second;
+        // Permit approach up to the conflict radius using the *actual* gap to
+        // the other vehicle. Deriving this from the yielder's own speed makes
+        // a stopped vehicle permanently stationary: at speed 0 it is allowed
+        // to travel 0 m, so it never restarts even after the other has gone.
+        // A real gap always lets it creep, which is how two drivers edging
+        // into the same roundabout resolve who goes first.
+        const separationM = distanceMeters(this.positionFor(first), this.positionFor(second), centerLat);
+        const distanceBeforeConflict = Math.max(0, separationM - 6.5);
         const safeArrivalS = conflictAt + 1.5;
         yielding.targetSpeed = Math.min(yielding.targetSpeed, distanceBeforeConflict / Math.max(0.5, safeArrivalS));
         yielding.targetLaneOffsetM = 0;
@@ -483,12 +648,22 @@ export class JunctionSimEngine {
       const proposedLane = v.laneOffsetM + Math.sign(laneDelta) * Math.min(Math.abs(laneDelta), 0.8 * dt);
       // Sweep both translation and heading; a long bus turning can otherwise
       // clip a stopped scooter even when its end position appears clear.
+      //
+      // Only *newly* contacted bodies block movement. A vehicle that already
+      // overlaps someone — after a spawn, a lane merge or a junction transfer
+      // — must be able to drive out of that overlap. Treating the overlap it
+      // is already in as a blocker is self-sustaining: the move that would
+      // resolve it is exactly the move being refused, so the vehicle stops
+      // forever and everything behind it queues into a permanent jam.
+      const alreadyTouching = this.overlappingIds(this.pose(v), JunctionSimEngine.SWEEP_MARGIN_M);
       let safe = true;
       const steps = Math.max(4, Math.ceil(v.speed * dt / 0.4));
       for (let step = 1; step <= steps; step++) {
         const fraction = step / steps;
-        if (!this.clearBody(this.pose(v, v.progress + fracDelta * fraction,
-          v.laneOffsetM + (proposedLane - v.laneOffsetM) * fraction))) { safe = false; break; }
+        const swept = this.pose(v, v.progress + fracDelta * fraction,
+          v.laneOffsetM + (proposedLane - v.laneOffsetM) * fraction);
+        const hits = this.overlappingIds(swept, JunctionSimEngine.SWEEP_MARGIN_M);
+        if ([...hits].some((id) => !alreadyTouching.has(id))) { safe = false; break; }
       }
       if (safe) {
         v.progress = proposedProgress;
