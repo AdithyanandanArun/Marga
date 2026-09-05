@@ -1,8 +1,16 @@
+import { useEffect, useState } from 'react';
 import { useUIStore } from '../state/uiStore';
 import { useWorldStore } from '../state/worldStore';
+import { useGraphStore } from '../state/graphStore';
+import { useRouteStore } from '../state/routeStore';
+import { fetchGraphEdge } from '../net/graphClient';
+import { fetchSignalState, requestSignalRecommendation } from '../net/signalsClient';
 import { formatSpeed, formatCoord, confidenceLabel, timeAgo, actorTypeIcon, headingToCardinal } from '../utils/geo';
-import { X, Navigation, Gauge, MapPin, Shield, Radio, Eye, TrafficCone } from 'lucide-react';
+import { X, Navigation, Gauge, MapPin, Shield, Radio, Eye, TrafficCone, Network, Brain, Route } from 'lucide-react';
 import type { VehicleState, Hazard, TrafficSignalState, RSUState } from '../types/canonical';
+import type { GraphEdgeMetrics } from '../types/graph';
+import type { RouteChange } from '../types/routes';
+import type { SignalJunctionState, SignalRecommendation } from '../types/signals';
 
 export function Inspector() {
   const selectedId = useUIStore((s) => s.selectedEntityId);
@@ -13,6 +21,8 @@ export function Inspector() {
   const hazards = useWorldStore((s) => s.hazards);
   const signals = useWorldStore((s) => s.signals);
   const rsus = useWorldStore((s) => s.rsus);
+  const graphEdges = useGraphStore((s) => s.edges);
+  const routeChanges = useRouteStore((s) => s.changesByVehicle);
 
   if (!selectedId) {
     return (
@@ -29,7 +39,7 @@ export function Inspector() {
   if (selectedType === 'vehicle') {
     const v = vehicles.get(selectedId);
     if (!v) return <div style={styles.empty}>Vehicle not found</div>;
-    return <VehicleInspector vehicle={v} onClose={close} />;
+    return <VehicleInspector vehicle={v} reroute={routeChanges.get(v.actor_id)} onClose={close} />;
   }
 
   if (selectedType === 'hazard') {
@@ -50,10 +60,14 @@ export function Inspector() {
     return <RSUInspector rsu={r} onClose={close} />;
   }
 
+  if (selectedType === 'edge') {
+    return <EdgeInspector edgeId={selectedId} edge={graphEdges.get(selectedId)} onClose={close} />;
+  }
+
   return <div style={styles.empty}>Unknown entity type</div>;
 }
 
-function VehicleInspector({ vehicle: v, onClose }: { vehicle: VehicleState; onClose: () => void }) {
+function VehicleInspector({ vehicle: v, reroute, onClose }: { vehicle: VehicleState; reroute?: RouteChange; onClose: () => void }) {
   return (
     <div>
       <div style={styles.inspectorHeader}>
@@ -99,6 +113,22 @@ function VehicleInspector({ vehicle: v, onClose }: { vehicle: VehicleState; onCl
           <div style={styles.statGrid}>
             <StatItem label="Segment" value={v.road_segment_id} wide />
             {v.lane_id && <StatItem label="Lane" value={v.lane_id} />}
+          </div>
+        </div>
+      )}
+
+      {reroute && (
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}><Route size={14} /> Cooperative Reroute</div>
+          <div style={styles.statGrid}>
+            <StatItem label="Old ETA" value={`${reroute.old_eta_s.toFixed(0)}s`} />
+            <StatItem
+              label="New ETA"
+              value={`${reroute.new_eta_s.toFixed(0)}s (${reroute.new_eta_s <= reroute.old_eta_s ? '−' : '+'}${Math.abs(reroute.old_eta_s - reroute.new_eta_s).toFixed(0)}s)`}
+              color={reroute.new_eta_s < reroute.old_eta_s ? 'var(--accent-green)' : 'var(--accent-yellow)'}
+            />
+            <StatItem label="Reason" value={reroute.reason} wide />
+            <StatItem label="Changed" value={timeAgo(reroute.changed_at)} />
           </div>
         </div>
       )}
@@ -153,6 +183,29 @@ function HazardInspector({ hazard: h, onClose }: { hazard: Hazard; onClose: () =
 function SignalInspector({ signal: s, onClose }: { signal: TrafficSignalState; onClose: () => void }) {
   const phaseColors: Record<string, string> = { RED: '#ef4444', AMBER: '#eab308', GREEN: '#22c55e' };
   const phases = s.phases ?? Object.entries(s.movements ?? {}).map(([movement_id, state]) => ({ movement_id, state }));
+  const junctionId = s.intersection_id ?? s.junction_id ?? null;
+
+  const [rlState, setRlState] = useState<SignalJunctionState | null>(null);
+  const [recommendation, setRecommendation] = useState<SignalRecommendation | null>(null);
+  const [loadingRl, setLoadingRl] = useState(false);
+
+  useEffect(() => {
+    if (!junctionId) return;
+    let cancelled = false;
+    setRlState(null);
+    setRecommendation(null);
+    fetchSignalState(junctionId).then((state) => { if (!cancelled) setRlState(state); });
+    return () => { cancelled = true; };
+  }, [junctionId]);
+
+  const askForRecommendation = () => {
+    if (!junctionId) return;
+    setLoadingRl(true);
+    requestSignalRecommendation(junctionId)
+      .then((rec) => setRecommendation(rec))
+      .finally(() => setLoadingRl(false));
+  };
+
   return (
     <div>
       <div style={styles.inspectorHeader}>
@@ -177,11 +230,121 @@ function SignalInspector({ signal: s, onClose }: { signal: TrafficSignalState; o
 
       <div style={styles.section}>
         <div style={styles.statGrid}>
-          <StatItem label="Junction" value={s.intersection_id ?? s.junction_id ?? '—'} />
+          <StatItem label="Junction" value={junctionId ?? '—'} />
           <StatItem label="Mode" value={s.controller_mode ?? 'ACTUATED'} />
           <StatItem label="Confidence" value={`${(s.confidence * 100).toFixed(0)}%`} />
         </div>
       </div>
+
+      <div style={styles.section}>
+        <div style={styles.sectionTitle}><Brain size={14} /> RL Signal Controller</div>
+        {!junctionId ? (
+          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>No junction id on this signal — cannot query the RL controller.</p>
+        ) : rlState ? (
+          <>
+            <div style={styles.statGrid}>
+              <StatItem label="Current Phase" value={rlState.current_phase} />
+              <StatItem label="Phase Duration" value={`${rlState.phase_duration_s.toFixed(1)}s`} />
+            </div>
+            {rlState.approaches.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                {rlState.approaches.map((a) => (
+                  <div key={a.approach_id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                    <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>{a.approach_id}</span>
+                    <span style={{ color: 'var(--text-primary)' }}>queue {a.queue_length} · {a.avg_speed_mps.toFixed(1)} m/s</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {(rlState.last_recommendation ?? recommendation) && (
+              <div style={{ marginTop: 10, padding: 8, borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent-purple)' }}>
+                  {(recommendation ?? rlState.last_recommendation)!.action}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+                  {(recommendation ?? rlState.last_recommendation)!.reason}
+                </div>
+              </div>
+            )}
+            {rlState.last_outcome && (
+              <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-secondary)' }}>
+                Outcome: queue {rlState.last_outcome.queue_before} → {rlState.last_outcome.queue_after}
+              </div>
+            )}
+            <button onClick={askForRecommendation} disabled={loadingRl} style={styles.smallActionBtn}>
+              {loadingRl ? 'Requesting…' : 'Request recommendation'}
+            </button>
+          </>
+        ) : (
+          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Waiting for the RL signal service — no fabricated decision shown.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EdgeInspector({ edgeId, edge, onClose }: { edgeId: string; edge: GraphEdgeMetrics | undefined; onClose: () => void }) {
+  const [fetched, setFetched] = useState<GraphEdgeMetrics | null>(null);
+  const [loading, setLoading] = useState(!edge);
+
+  useEffect(() => {
+    if (edge) return;
+    let cancelled = false;
+    setLoading(true);
+    fetchGraphEdge(edgeId).then((result) => {
+      if (!cancelled) { setFetched(result); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [edgeId, edge]);
+
+  const data = edge ?? fetched ?? undefined;
+
+  return (
+    <div>
+      <div style={styles.inspectorHeader}>
+        <Network size={20} style={{ color: 'var(--accent-blue)' }} />
+        <div>
+          <div style={styles.entityId}>{edgeId}</div>
+          <div style={styles.entityType}>Road Edge</div>
+        </div>
+        <button onClick={onClose} style={styles.closeBtn}><X size={16} /></button>
+      </div>
+
+      {!data ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {loading ? 'Loading graph metrics…' : 'Waiting for the mobility graph service — no fabricated metrics shown.'}
+        </p>
+      ) : (
+        <>
+          <div style={styles.section}>
+            <ProgressBar label="Density" value={data.density} color={data.density > 0.7 ? 'var(--severity-high)' : data.density > 0.4 ? 'var(--severity-medium)' : 'var(--severity-low)'} />
+            <ProgressBar label="Capacity" value={data.capacity_ratio} color={data.capacity_ratio > 0.8 ? 'var(--severity-high)' : data.capacity_ratio > 0.5 ? 'var(--severity-medium)' : 'var(--severity-low)'} />
+          </div>
+          <div style={styles.section}>
+            <div style={styles.statGrid}>
+              <StatItem label="Vehicles" value={`${data.vehicle_count}`} />
+              <StatItem label="Queue" value={`${data.queue_length}`} />
+              <StatItem label="Avg Speed" value={formatSpeed(data.avg_speed_mps)} />
+              <StatItem label="Two-Wheeler Ratio" value={`${(data.two_wheeler_ratio * 100).toFixed(0)}%`} />
+              <StatItem label="Flow Rate" value={`${data.flow_rate_vph.toFixed(0)} vph`} />
+              <StatItem label="Occupancy" value={`${(data.occupancy * 100).toFixed(0)}%`} />
+              <StatItem label="Downstream" value={`${(data.downstream_congestion * 100).toFixed(0)}%`} />
+              <StatItem label="GPS Confidence" value={confidenceLabel(data.gps_confidence)} />
+              {data.hazard_penalty > 0 && <StatItem label="Hazard Penalty" value={data.hazard_penalty.toFixed(2)} color="var(--severity-high)" />}
+            </div>
+          </div>
+          {data.rolling_windows['60'] && (
+            <div style={styles.section}>
+              <div style={styles.sectionTitle}>60s Rolling Window</div>
+              <div style={styles.statGrid}>
+                <StatItem label="Avg Speed" value={formatSpeed(data.rolling_windows['60'].avg_speed_mps)} />
+                <StatItem label="Vehicles" value={data.rolling_windows['60'].avg_vehicle_count.toFixed(1)} />
+                <StatItem label="Queue" value={data.rolling_windows['60'].avg_queue_length.toFixed(1)} />
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -279,5 +442,10 @@ const styles: Record<string, React.CSSProperties> = {
   capBadge: {
     padding: '2px 8px', borderRadius: 'var(--radius-sm)', background: 'var(--bg-primary)',
     fontSize: 10, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)',
+  },
+  smallActionBtn: {
+    marginTop: 10, padding: '6px 12px', borderRadius: 'var(--radius-sm)',
+    background: 'var(--accent-purple)', border: 'none', color: '#fff',
+    fontSize: 11, fontWeight: 600, cursor: 'pointer',
   },
 };

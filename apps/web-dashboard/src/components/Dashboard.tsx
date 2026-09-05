@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, AlertTriangle, Crosshair, Layers, Radio, Search, Settings, ShieldCheck, TrainTrack, Wifi, WifiOff } from 'lucide-react';
+import { Activity, AlertTriangle, Crosshair, Layers, Radio, Search, Settings, ShieldCheck, Signal, TrainTrack, Wifi, WifiOff } from 'lucide-react';
 import { MapView } from '../map/MapView';
 import { AlertPanel } from './AlertPanel';
 import { Inspector } from './Inspector';
 import { SystemHealth } from './SystemHealth';
 import { LayerControls } from './LayerControls';
 import { WorldStream } from '../net/worldStream';
-import { networkTelemetry } from '../simulation/networkTelemetry';
+import { V2XStream } from '../net/v2xClient';
 import { useUIStore } from '../state/uiStore';
 import { useWorldStore } from '../state/worldStore';
+import { useV2XStore, selectPc5Local } from '../state/v2xStore';
 import type { RiskEvent, VehicleState } from '../types/canonical';
 import { selectPrimaryRisk } from '../utils/risk';
+import { mpsToKmh } from '../utils/geo';
 
 type AdvancedTab = 'alerts' | 'inspector' | 'health' | 'layers';
 type Tone = 'good' | 'warning' | 'muted';
@@ -36,18 +38,30 @@ export function Dashboard() {
   const risks = useWorldStore((s) => s.risks);
   const connectivity = useWorldStore((s) => s.connectivity);
   const lastUpdate = useWorldStore((s) => s.lastUpdate);
+  const pc5Local = useV2XStore(selectPc5Local);
+  const v2xStreamConnected = useV2XStore((s) => s.streamConnected);
 
+  // The Control Center is the real integration proof — SUMO -> mobility graph
+  // -> RL/routing/edge V2X -> SUMO changes -> UI — so it only ever consumes
+  // WorldStream (the gateway) and never starts the client-side junction
+  // simulator itself. That simulator is a dev/demo tool: it lives on its own
+  // page (/simulation), entered deliberately, never auto-started here.
   useEffect(() => {
     const stream = new WorldStream({ onConnectionChange: setGatewayConnected });
     stream.connect();
-    const releaseTelemetry = networkTelemetry.retain();
-    return () => { stream.disconnect(); releaseTelemetry(); };
+    const v2x = new V2XStream();
+    v2x.connect();
+    return () => { stream.disconnect(); v2x.disconnect(); };
   }, []);
 
   const primaryRisk = useMemo(() => selectPrimaryRisk(risks.values()), [risks]);
   const riskActors = primaryRisk?.affected_actor_ids.map((id) => vehicles.get(id)).filter(Boolean) as VehicleState[] | undefined;
   const gpsUncertainty = riskActors?.length ? Math.max(...riskActors.map((actor) => actor.position_uncertainty_m)) : undefined;
   const directV2x = connectivity === 'DIRECT_ONLY' || connectivity === 'FULL';
+  // Real, derived-from-telemetry road summary — never a placeholder value.
+  const avgSpeedKmh = vehicles.size > 0
+    ? mpsToKmh(Array.from(vehicles.values()).reduce((sum, v) => sum + v.speed_mps, 0) / vehicles.size)
+    : undefined;
 
   return <main style={s.shell} aria-label="Marga V2X resilience dashboard">
     <header style={s.header}>
@@ -66,6 +80,13 @@ export function Dashboard() {
           <Status icon={<Wifi size={17} />} label="Internet" value={connectivity === 'DIRECT_ONLY' ? 'Offline' : gatewayConnected ? 'Online' : 'Reconnecting'} detail={connectivity === 'DIRECT_ONLY' ? 'Safety stays local' : 'Cloud path available'} tone={connectivity === 'DIRECT_ONLY' ? 'warning' : gatewayConnected ? 'good' : 'muted'} />
           <Status icon={<Crosshair size={17} />} label="Positioning" value={gpsUncertainty ? `GPS ±${Math.round(gpsUncertainty)} m` : 'Awaiting GPS'} detail={gpsUncertainty ? 'Confidence adjusts to uncertainty' : 'No active road user'} tone={gpsUncertainty && gpsUncertainty > 15 ? 'warning' : 'good'} />
           <Status icon={<Radio size={17} />} label="Safety link" value={directV2x ? 'Direct V2X' : 'Link unavailable'} detail={directV2x ? 'Nearby warning path active' : 'No local peer path'} tone={directV2x ? 'good' : 'muted'} />
+          <Status
+            icon={<Signal size={17} />}
+            label="PC5 (local)"
+            value={pc5Local ? 'Active, local-only' : v2xStreamConnected ? 'No PC5 nodes reporting' : 'Edge V2X unavailable'}
+            detail={pc5Local ? 'Delivers safety warnings even with internet off' : 'Waiting for edge V2X nodes — never simulated here'}
+            tone={pc5Local ? 'good' : 'muted'}
+          />
         </section>
         <section style={{ ...s.incidentCard, ...(primaryRisk ? s.incidentActive : {}) }} aria-live="polite">
           <div style={s.eyebrow}>{primaryRisk ? <><AlertTriangle size={15} /> COLLISION RISK</> : <><ShieldCheck size={15} /> ROAD SAFETY MONITOR</>}</div>
@@ -85,7 +106,12 @@ export function Dashboard() {
         <div style={s.advancedContent}>{advancedTab === 'alerts' && <AlertPanel />}{advancedTab === 'inspector' && <Inspector />}{advancedTab === 'health' && <SystemHealth />}{advancedTab === 'layers' && <LayerControls />}</div>
       </aside>}
     </section>
-    <footer style={s.footer}><span>Mixed traffic: {vehicles.size} vehicles · {pedestrians.size} pedestrians</span><span>Junction view · ±300 m</span><span style={{ marginLeft: 'auto' }}>Last verified update: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '—'}</span></footer>
+    <footer style={s.footer}>
+      <span>Mixed traffic: {vehicles.size} vehicles · {pedestrians.size} pedestrians</span>
+      <span>Avg speed: {avgSpeedKmh !== undefined ? `${avgSpeedKmh.toFixed(0)} km/h` : '—'}</span>
+      <span>Junction view · ±300 m</span>
+      <span style={{ marginLeft: 'auto' }}>Last verified update: {lastUpdate ? new Date(lastUpdate).toLocaleTimeString() : '—'}</span>
+    </footer>
   </main>;
 }
 

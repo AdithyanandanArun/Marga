@@ -10,8 +10,12 @@ import { createInfrastructureLayer } from './layers/infrastructure';
 import { createTrajectoriesLayer } from './layers/trajectories';
 import { createV2XLinksLayer } from './layers/v2xLinks';
 import { createNetworkRoadLayers, NETWORK_BOUNDS, NETWORK_CENTER } from './layers/networkScene';
+import { createEdgeLoadLayer } from './layers/edgeLoad';
+import { createRerouteLayer } from './layers/reroute';
 import type { VehicleState } from '../types/canonical';
 import { selectPrimaryRisk } from '../utils/risk';
+import { useGraphStore } from '../state/graphStore';
+import { useRouteStore } from '../state/routeStore';
 
 const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
@@ -62,6 +66,8 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
   const showV2XLinks = useUIStore((s) => s.showV2XLinks);
 
   const selectedEntityId = useUIStore((s) => s.selectedEntityId);
+  const graphEdges = useGraphStore((s) => s.edges);
+  const routeChanges = useRouteStore((s) => s.changesByVehicle);
 
   // The demo opens on the live road scene, rather than a city-scale view where
   // the mixed traffic and conflict are indistinguishable. This happens once;
@@ -141,8 +147,8 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
       onClick: (info: { object?: Record<string, unknown> }) => {
         if (!info.object) return;
         const obj = info.object as Record<string, string>;
-        const id = obj.actor_id || obj.hazard_id || obj.signal_id || obj.rsu_id || obj.event_id || obj.observation_id || '';
-        const type = obj.actor_id ? 'vehicle' : obj.hazard_id ? 'hazard' : obj.signal_id ? 'signal' : obj.rsu_id ? 'rsu' : 'unknown';
+        const id = obj.actor_id || obj.hazard_id || obj.signal_id || obj.rsu_id || obj.event_id || obj.observation_id || obj.edge_id || '';
+        const type = obj.actor_id ? 'vehicle' : obj.hazard_id ? 'hazard' : obj.signal_id ? 'signal' : obj.rsu_id ? 'rsu' : obj.edge_id ? 'edge' : 'unknown';
         if (id && onEntityClick) onEntityClick(id, type);
       },
     });
@@ -180,6 +186,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
     const orientedVehicleMap = vehicles;
     const layers = [
       ...(roadScene ? createNetworkRoadLayers() : []),
+      ...(roadScene ? createEdgeLoadLayer(orientedVehicles, graphEdges) : []),
       ...createActorLayer(
         orientedVehicles,
         Array.from(pedestrians.values()),
@@ -192,6 +199,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
       ...(showRiskZones ? createRiskLayer(Array.from(risks.values()), orientedVehicleMap, zoom) : []),
       ...(showTrajectories ? [createTrajectoriesLayer(orientedVehicles, Array.from(risks.values())[0]?.affected_actor_ids)] : []),
       ...(showV2XLinks ? [createV2XLinksLayer(orientedVehicles, Array.from(rsus.values()))] : []),
+      ...(selectedEntityId ? createRerouteLayer(routeChanges.get(selectedEntityId)) : []),
       ...createInfrastructureLayer(
         showSignals ? Array.from(signals.values()) : [],
         showRoadEvents ? Array.from(roadEvents.values()) : [],
@@ -201,7 +209,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
     ];
 
     deckRef.current.setProps({ layers });
-  }, [vehicles, pedestrians, hazards, signals, roadEvents, dynamicActors, rsus, risks,
+  }, [vehicles, pedestrians, hazards, signals, roadEvents, dynamicActors, rsus, risks, graphEdges, routeChanges,
       showUncertainty, showTrajectories, showRiskZones, showV2XLinks, showSignals, showHazards, showRoadEvents, showRSUs,
       selectedEntityId, viewport.zoom, roadScene]);
 

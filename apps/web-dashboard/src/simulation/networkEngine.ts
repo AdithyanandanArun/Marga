@@ -11,7 +11,7 @@ export interface JunctionNetwork {
   junctions: JunctionDefinition[];
 }
 
-const NETWORK_LAYOUT: Array<{ type: JunctionType; northM: number; eastM: number; id: string }> = [
+export const NETWORK_LAYOUT: Array<{ type: JunctionType; northM: number; eastM: number; id: string }> = [
   { type: 'CROSS', northM: 0, eastM: 0, id: 'hub' },
   { type: 'ROUNDABOUT', northM: 0, eastM: 440, id: 'roundabout' },
   { type: 'RAILWAY_CROSSING', northM: 0, eastM: -440, id: 'rail-crossing' },
