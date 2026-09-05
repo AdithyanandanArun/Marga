@@ -9,6 +9,7 @@ import { createRiskLayer } from './layers/risks';
 import { createInfrastructureLayer } from './layers/infrastructure';
 import { createTrajectoriesLayer } from './layers/trajectories';
 import { createV2XLinksLayer } from './layers/v2xLinks';
+import type { VehicleState } from '../types/canonical';
 
 const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
@@ -24,6 +25,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
   const mapRef = useRef<maplibregl.Map | null>(null);
   const deckRef = useRef<Deck | null>(null);
   const animRef = useRef<number>(0);
+  const hasAutoFramedRef = useRef(false);
   const onMapClickRef = useRef(onMapClick);
   const [mapLoaded, setMapLoaded] = useState(false);
 
@@ -52,6 +54,24 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
   const showV2XLinks = useUIStore((s) => s.showV2XLinks);
 
   const selectedEntityId = useUIStore((s) => s.selectedEntityId);
+
+  // The demo opens on the live road scene, rather than a city-scale view where
+  // the mixed traffic and conflict are indistinguishable. This happens once;
+  // subsequent pan/zoom is always controlled by the judge/operator.
+  useEffect(() => {
+    if (hasAutoFramedRef.current || !mapLoaded || !mapRef.current || vehicles.size === 0) return;
+    const focusIds = [...risks.values()]
+      .sort((a, b) => b.risk_score - a.risk_score || a.time_to_conflict_s - b.time_to_conflict_s)[0]
+      ?.affected_actor_ids;
+    const actors = focusIds
+      ? focusIds.map((id) => vehicles.get(id)).filter((actor): actor is VehicleState => actor !== undefined)
+      : Array.from(vehicles.values());
+    if (actors.length === 0) return;
+    hasAutoFramedRef.current = true;
+    const latitude = actors.reduce((sum, actor) => sum + actor.position.lat, 0) / actors.length;
+    const longitude = actors.reduce((sum, actor) => sum + actor.position.lon, 0) / actors.length;
+    mapRef.current.flyTo({ center: [longitude, latitude], zoom: 16.5, duration: 700, essential: true });
+  }, [mapLoaded, vehicles, risks]);
 
   useEffect(() => {
     if (!mapContainer.current) return;
