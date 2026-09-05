@@ -55,14 +55,26 @@ export class JunctionNetworkEngine {
   }
 
   tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[] } {
-    return this.engines.reduce<{ vehicles: VehicleState[]; signals: TrafficSignalState[] }>(
-      (frame, engine) => {
-        const next = engine.tick(dtMs);
+    const frames = this.engines.map((engine) => engine.tick(dtMs));
+    for (const [sourceIndex, frame] of frames.entries()) {
+      for (const exiting of frame.exits) {
+        const recipients = this.engines
+          .map((engine, index) => ({ engine, index }))
+          .filter(({ engine, index }) => index !== sourceIndex && engine.canAcceptAt(exiting.position));
+        const recipient = recipients[0]?.engine;
+        // A handoff keeps the actor ID and position continuous. At busy
+        // downstream junctions the engine chooses its least-loaded legal exit;
+        // otherwise it samples a route for natural mixed-traffic variation.
+        if (recipient?.acceptTransfer(exiting, exiting.position, recipient.isCongested())) continue;
+        this.engines[sourceIndex].respawn(exiting);
+      }
+    }
+    return frames.reduce<{ vehicles: VehicleState[]; signals: TrafficSignalState[] }>(
+      (frame, next) => {
         frame.vehicles.push(...next.vehicles);
         frame.signals.push(...next.signals);
         return frame;
-      },
-      { vehicles: [], signals: [] },
+      }, { vehicles: [], signals: [] },
     );
   }
 

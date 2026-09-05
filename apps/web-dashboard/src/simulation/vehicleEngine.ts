@@ -1,5 +1,5 @@
 import type { VehicleState, TrafficSignalState, ActorType } from '../types/canonical';
-import { samplePath, type SampledPath } from './geometry';
+import { distanceMeters, samplePath, type Point, type SampledPath } from './geometry';
 import type { JunctionDefinition, RouteDef } from './junctionDefs';
 
 const SPAWNABLE_TYPES: ActorType[] = ['CAR', 'BIKE', 'AUTO', 'BUS', 'TRUCK'];
@@ -39,6 +39,12 @@ interface SimVehicle {
   state: SimState;
   nextDecisionAt: number;
   weavePhase: number;
+}
+
+export interface TransferredVehicle {
+  actorId: string;
+  actorType: ActorType;
+  position: Point;
 }
 
 export interface EngineOptions {
@@ -141,11 +147,44 @@ export class JunctionSimEngine {
     return false;
   }
 
-  tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[] } {
+  /** Whether an incoming vehicle can enter this junction at the given shared
+   * road endpoint.  This uses geometry, not a fixed junction pairing. */
+  canAcceptAt(position: Point): boolean {
+    return this.junction.routes.some((route) => distanceMeters(route.path[0], position, this.junction.center[1]) < 2);
+  }
+
+  /** Admit at a shared endpoint.  Low traffic samples a legal outgoing
+   * movement; a queued junction uses the least-loaded legal movement. */
+  acceptTransfer(vehicle: TransferredVehicle, entryPosition: Point, congestionAware: boolean): boolean {
+    const candidates = this.junction.routes.filter(
+      (route) => distanceMeters(route.path[0], entryPosition, this.junction.center[1]) < 2,
+    );
+    if (!candidates.length) return false;
+    const route = congestionAware ? this.leastLoadedRoute(candidates) : pick(candidates);
+    const spawned = this.spawnVehicle(0);
+    Object.assign(spawned, { id: vehicle.actorId, actorType: vehicle.actorType, route, sampled: samplePath(route.path, this.junction.center[1]), progress: 0 });
+    this.vehicles.push(spawned);
+    return true;
+  }
+
+  respawn(vehicle: TransferredVehicle): void {
+    const spawned = this.spawnVehicle(0);
+    Object.assign(spawned, { id: vehicle.actorId, actorType: vehicle.actorType });
+    this.vehicles.push(spawned);
+  }
+
+  isCongested(): boolean {
+    const stopped = this.vehicles.filter((vehicle) => vehicle.state === 'STOPPED').length;
+    return stopped >= 2 || this.vehicles.length >= 10;
+  }
+
+  tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[]; exits: TransferredVehicle[] } {
     this.clockMs += dtMs;
     const dt = Math.min(0.5, dtMs / 1000);
     const now = this.clockMs;
 
+    const exits: TransferredVehicle[] = [];
+    const activeVehicles: SimVehicle[] = [];
     for (const v of this.vehicles) {
       const profile = SPEED_PROFILE[v.actorType];
 
@@ -182,9 +221,13 @@ export class JunctionSimEngine {
       v.weavePhase += dt;
 
       if (v.progress >= 1) {
-        Object.assign(v, this.spawnVehicle(0), { id: v.id });
+        const position = v.sampled.pointAt(1);
+        exits.push({ actorId: v.id, actorType: v.actorType, position });
+        continue;
       }
+      activeVehicles.push(v);
     }
+    this.vehicles = activeVehicles;
 
     const nowIso = new Date().toISOString();
     const vehicles: VehicleState[] = this.vehicles.map((v) => {
@@ -249,6 +292,13 @@ export class JunctionSimEngine {
       });
     }
 
-    return { vehicles, signals };
+    return { vehicles, signals, exits };
+  }
+
+  private leastLoadedRoute(candidates: RouteDef[]): RouteDef {
+    const loads = new Map<string, number>();
+    for (const vehicle of this.vehicles) loads.set(vehicle.route.id, (loads.get(vehicle.route.id) ?? 0) + 1);
+    const minimum = Math.min(...candidates.map((route) => loads.get(route.id) ?? 0));
+    return pick(candidates.filter((route) => (loads.get(route.id) ?? 0) === minimum));
   }
 }
