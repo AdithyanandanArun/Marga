@@ -7,12 +7,12 @@ const METERS_PER_LON = 108_500;
 type Point = [number, number];
 
 const point = (northM: number, eastM: number): Point => [LON + eastM / METERS_PER_LON, LAT + northM / METERS_PER_LAT];
-const horizontal = (northM: number): Point[] => [point(northM, -230), point(northM, -65), point(0, 0), point(-northM, 65), point(-northM, 230)];
-const vertical = (eastM: number): Point[] => [point(-230, eastM), point(-65, eastM), point(0, 0), point(65, -eastM), point(230, -eastM)];
+const horizontal = (northM: number): Point[] => [point(northM, -300), point(northM, -65), point(0, 0), point(-northM, 65), point(-northM, 300)];
+const vertical = (eastM: number): Point[] => [point(-300, eastM), point(-65, eastM), point(0, 0), point(65, -eastM), point(300, -eastM)];
 
 const roads = [
-  { path: [point(0, -240), point(0, 240)] },
-  { path: [point(-240, 0), point(240, 0)] },
+  { path: [point(0, -310), point(0, 310)] },
+  { path: [point(-310, 0), point(310, 0)] },
 ];
 const lanes = [horizontal(2), horizontal(4), horizontal(-2), horizontal(-4), vertical(-2), vertical(2), vertical(-2.8), vertical(2.8)];
 

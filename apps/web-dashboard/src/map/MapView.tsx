@@ -72,7 +72,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
     hasAutoFramedRef.current = true;
     const latitude = actors.reduce((sum, actor) => sum + actor.position.lat, 0) / actors.length;
     const longitude = actors.reduce((sum, actor) => sum + actor.position.lon, 0) / actors.length;
-    mapRef.current.flyTo({ center: [longitude, latitude], zoom: 16.5, duration: 700, essential: true });
+    mapRef.current.flyTo({ center: [longitude, latitude], zoom: 16, duration: 900, essential: true });
   }, [mapLoaded, vehicles, risks]);
 
   useEffect(() => {

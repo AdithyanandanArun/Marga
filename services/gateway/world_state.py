@@ -24,6 +24,7 @@ from packages.schemas.hazards import HazardObservation
 from services.integration.canonical_bridge import vehicle_from_adapter_event
 from services.position import PositionFusionService, predict_trajectory
 from services.risk import RiskEngine
+from services.policy_learning import ContextualSafetyBandit, PolicyContext
 
 from .incidents import incident_traces
 
@@ -35,6 +36,7 @@ _entities: dict[tuple[EntityType, str], dict[str, Any]] = {}
 _subscribers: list[asyncio.Queue[dict[str, Any]]] = []
 _position_fusion = PositionFusionService()
 _risk_engine = RiskEngine()
+_policy_learner = ContextualSafetyBandit()
 
 # Latest connectivity state and per-actor position quality (enriched in every WS delta)
 _connectivity_state: dict[str, Any] | None = None
@@ -199,6 +201,48 @@ async def ingest_hazard_observation(observation: HazardObservation) -> dict[str,
 
 class IngestRequest(BaseModel):
     events: list[Any]
+
+
+class PolicyFeedbackRequest(BaseModel):
+    action: Literal["SLOW_DOWN_ADVISORY", "LOCAL_RELAY", "EARLY_WARNING"]
+    reward: float = Field(ge=0.0, le=1.0)
+    congestion_count: int = Field(ge=0)
+    gps_uncertainty_m: float = Field(ge=0.0)
+    connectivity: str = "FULL"
+    decision_key: str
+
+
+def _policy_context() -> PolicyContext:
+    risks = [data for (kind, _), data in _entities.items() if kind == "risk"]
+    highest = max(risks, key=lambda item: float(item.get("risk_score", 0.0)), default={})
+    vehicles = [data for (kind, _), data in _entities.items() if kind == "vehicle"]
+    uncertainty = max((float(item.get("position_uncertainty_m", 0.0)) for item in vehicles), default=0.0)
+    return PolicyContext(
+        congestion_count=len(vehicles),
+        gps_uncertainty_m=uncertainty,
+        connectivity=str((_connectivity_state or {}).get("mode", "FULL")),
+        risk_severity=float(highest.get("severity", 0.0)),
+        decision_key=str(highest.get("risk_id", "no-active-risk")),
+    )
+
+
+@router.get("/v1/policy/recommendation")
+async def policy_recommendation() -> dict[str, object]:
+    """Return an advisory response policy; this never replaces risk detection."""
+    return _policy_learner.recommend(_policy_context())
+
+
+@router.post("/v1/policy/feedback")
+async def policy_feedback(feedback: PolicyFeedbackRequest) -> dict[str, object]:
+    """Score a completed advisory outcome so the bandit can learn online."""
+    context = PolicyContext(
+        congestion_count=feedback.congestion_count,
+        gps_uncertainty_m=feedback.gps_uncertainty_m,
+        connectivity=feedback.connectivity,
+        risk_severity=0.0,
+        decision_key=feedback.decision_key,
+    )
+    return _policy_learner.record_feedback(context, feedback.action, feedback.reward)
 
 
 @router.post("/v1/world-state/ingest")
