@@ -6,6 +6,7 @@ import asyncio
 import logging
 import math
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -40,6 +41,23 @@ router = APIRouter(tags=["world-state"])
 
 EntityType = Literal["vehicle", "pedestrian", "hazard", "signal", "risk"]
 _entities: dict[tuple[EntityType, str], dict[str, Any]] = {}
+
+# Live actors are only ever removed by an explicit retire call from the adapter
+# that produced them. A browser tab that is closed, reloaded or crashes never
+# sends those calls, so its vehicles and signals stayed in the world forever,
+# frozen at their last reported position. The dashboard then rendered hours of
+# accumulated corpses alongside the handful of genuinely live actors, which
+# looks exactly like "nothing is moving".
+#
+# Liveness is tracked with a monotonic server-side clock rather than the
+# report's own `ts`: a producer's clock may be skewed, and replayed historical
+# telemetry carries deliberately old timestamps that must not be evicted on
+# arrival.
+_last_seen: dict[tuple[EntityType, str], float] = {}
+# Entity kinds that represent a continuously reporting producer. Hazards carry
+# their own expiry and risks are recomputed every frame, so neither is swept.
+_PERISHABLE: tuple[EntityType, ...] = ("vehicle", "pedestrian", "signal")
+DEFAULT_ACTOR_TTL_S = 10.0
 _subscribers: list[asyncio.Queue[dict[str, Any]]] = []
 _position_fusion = PositionFusionService()
 _risk_engine = RiskEngine()
@@ -107,7 +125,36 @@ def _notify(delta: dict[str, Any]) -> None:
 def _store_model(entity_type: EntityType, entity_id: str, model: BaseModel) -> dict[str, Any]:
     data = model.model_dump(mode="json")
     _entities[(entity_type, entity_id)] = data
+    _last_seen[(entity_type, entity_id)] = monotonic()
     return _entity(entity_type, entity_id, data)
+
+
+def prune_stale_entities(ttl_s: float = DEFAULT_ACTOR_TTL_S) -> list[dict[str, str]]:
+    """Drop perishable entities whose producer has stopped reporting.
+
+    Returns the deletion records so the caller can broadcast them; connected
+    dashboards remove the actor immediately rather than waiting for a reload.
+    """
+    cutoff = monotonic() - ttl_s
+    deletes = [
+        {"entity_type": kind, "entity_id": entity_id}
+        for (kind, entity_id) in tuple(_entities)
+        if kind in _PERISHABLE and _last_seen.get((kind, entity_id), 0.0) < cutoff
+    ]
+    for record in deletes:
+        key = (record["entity_type"], record["entity_id"])
+        _entities.pop(key, None)  # type: ignore[arg-type]
+        _last_seen.pop(key, None)  # type: ignore[arg-type]
+    return deletes
+
+
+async def sweep_stale_entities(ttl_s: float = DEFAULT_ACTOR_TTL_S) -> int:
+    """Prune abandoned actors and tell every subscriber they are gone."""
+    deletes = prune_stale_entities(ttl_s)
+    if deletes:
+        logger.info("evicted %d stale entities (no report in %.0fs)", len(deletes), ttl_s)
+        _notify(_world_delta("delta", [], deletes))
+    return len(deletes)
 
 
 def _vehicle_states() -> list[VehicleState]:
@@ -482,6 +529,7 @@ async def retire_actor(actor_id: str) -> dict[str, str]:
     cleared incident must not leave a phantom vehicle on the Control Center.
     """
     actor = _entities.pop(("vehicle", actor_id), None)
+    _last_seen.pop(("vehicle", actor_id), None)
     if actor is None:
         raise HTTPException(status_code=404, detail=f"Actor {actor_id!r} not in world state")
     _notify(_world_delta("delta", [], [{"entity_type": "vehicle", "entity_id": actor_id}]))

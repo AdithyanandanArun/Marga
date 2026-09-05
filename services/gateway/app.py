@@ -33,6 +33,26 @@ async def _adaptive_signal_loop(interval_s: float) -> None:
                 # not a reason to manufacture a control action.
                 logger.debug("adaptive signal tick skipped for %s: %s", junction_id, exc)
 
+
+async def _stale_actor_reaper() -> None:
+    """Evict actors whose producer stopped reporting.
+
+    The TTL is the contract for "a live adapter refreshes its actors". It is
+    generous relative to the 4 Hz browser adapter, so a slow frame or a brief
+    gateway hiccup never blinks a real vehicle off the map.
+    """
+    from services.gateway.world_state import DEFAULT_ACTOR_TTL_S, sweep_stale_entities
+
+    ttl_s = max(2.0, float(os.environ.get("MARGA_ACTOR_TTL_S", DEFAULT_ACTOR_TTL_S)))
+    interval_s = max(1.0, ttl_s / 4)
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await sweep_stale_entities(ttl_s)
+        except Exception as exc:
+            logger.debug("stale actor sweep skipped: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Optional OpenTelemetry instrumentation — only activates when the exporter
 # environment variables are configured.
@@ -130,6 +150,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await initialize_v2x()
     except ImportError as exc:
         logger.warning("routing or edge V2X integration unavailable: %s", exc)
+    # Abandoned producers (a closed or reloaded browser tab) never retire their
+    # actors, so without this sweep the world accumulates frozen vehicles that
+    # are indistinguishable from live ones on the map.
+    reaper_task = asyncio.create_task(_stale_actor_reaper())
     signal_task: asyncio.Task[None] | None = None
     if os.environ.get("MARGA_SIGNAL_CONTROL_ENABLED", "false").lower() == "true":
         interval_s = max(1.0, float(os.environ.get("MARGA_SIGNAL_CONTROL_INTERVAL_S", "5")))
@@ -137,10 +161,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("adaptive signal control loop enabled at %.1fs", interval_s)
     yield
 
-    if signal_task is not None:
-        signal_task.cancel()
+    for task in (reaper_task, signal_task):
+        if task is None:
+            continue
+        task.cancel()
         try:
-            await signal_task
+            await task
         except asyncio.CancelledError:
             pass
     try:
