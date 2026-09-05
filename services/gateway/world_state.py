@@ -23,9 +23,9 @@ from packages.schemas.canonical import (
 )
 from packages.schemas.hazards import HazardObservation
 from services.integration.canonical_bridge import vehicle_from_adapter_event
+from services.policy_learning import ContextualSafetyBandit, PolicyContext
 from services.position import PositionFusionService, predict_trajectory
 from services.risk import RiskEngine
-from services.policy_learning import ContextualSafetyBandit, PolicyContext
 
 from .incidents import incident_traces
 

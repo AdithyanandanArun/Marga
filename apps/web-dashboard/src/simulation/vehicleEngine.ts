@@ -45,6 +45,9 @@ export interface EngineOptions {
   junction: JunctionDefinition;
   vehicleCount: number;
   chaos: number;
+  /** Stable namespace supplied by the simulation adapter, not a UI identity. */
+  actorIdPrefix?: string;
+  junctionId?: string;
 }
 
 function randRange(min: number, max: number): number {
@@ -63,12 +66,16 @@ export class JunctionSimEngine {
   private junction: JunctionDefinition;
   private vehicles: SimVehicle[] = [];
   private chaos: number;
+  private readonly actorIdPrefix: string;
+  private readonly junctionId: string;
   private clockMs = 0;
   private nextId = 0;
 
   constructor(opts: EngineOptions) {
     this.junction = opts.junction;
     this.chaos = opts.chaos;
+    this.actorIdPrefix = opts.actorIdPrefix ?? 'sim';
+    this.junctionId = opts.junctionId ?? 'sim-junction';
     this.setVehicleCount(opts.vehicleCount);
   }
 
@@ -93,7 +100,7 @@ export class JunctionSimEngine {
     const actorType = pick(SPAWNABLE_TYPES);
     const profile = SPEED_PROFILE[actorType];
     return {
-      id: `sim-${this.nextId++}`,
+      id: `${this.actorIdPrefix}-${this.nextId++}`,
       actorType,
       route,
       sampled: samplePath(route.path, this.junction.center[1]),
@@ -207,8 +214,8 @@ export class JunctionSimEngine {
       const phase = this.signalPhase();
       const sig = this.junction.signal;
       signals.push({
-        signal_id: 'sim-signal-a',
-        junction_id: 'sim-junction',
+        signal_id: `${this.junctionId}-signal-a`,
+        junction_id: this.junctionId,
         ts: nowIso,
         phases: [{ movement_id: 'A', state: phase === 'A' ? 'GREEN' : phase === 'NONE' ? 'AMBER' : 'RED' }],
         controller_mode: 'FIXED',
@@ -217,8 +224,8 @@ export class JunctionSimEngine {
         position: { lat: sig.groupA[1], lon: sig.groupA[0] },
       });
       signals.push({
-        signal_id: 'sim-signal-b',
-        junction_id: 'sim-junction',
+        signal_id: `${this.junctionId}-signal-b`,
+        junction_id: this.junctionId,
         ts: nowIso,
         phases: [{ movement_id: 'B', state: phase === 'B' ? 'GREEN' : phase === 'NONE' ? 'AMBER' : 'RED' }],
         controller_mode: 'FIXED',
@@ -231,8 +238,8 @@ export class JunctionSimEngine {
       const open = this.gateOpen();
       const gate = this.junction.gate;
       signals.push({
-        signal_id: 'sim-gate',
-        junction_id: 'sim-crossing',
+        signal_id: `${this.junctionId}-gate`,
+        junction_id: this.junctionId,
         ts: nowIso,
         phases: [{ movement_id: 'ROAD', state: open ? 'GREEN' : 'RED' }],
         controller_mode: 'FIXED',
