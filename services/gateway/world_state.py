@@ -218,6 +218,7 @@ async def ingest_hazard_observation(observation: HazardObservation) -> dict[str,
         source_ids=[observation.reporting_source, *observation.corroborating_sources],
         evidence_count=1 + len(observation.corroborating_sources),
         state=HazardState.CANDIDATE,
+        road_segment_id=observation.road_segment_id,
     )
     entity = _store_model("hazard", hazard.hazard_id, hazard)
     mobility_graph.observe_hazard(hazard)

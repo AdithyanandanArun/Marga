@@ -116,3 +116,29 @@ def test_gateway_maps_adapter_pedestrian_to_its_graph_edge() -> None:
         )
         assert response.status_code == 200
         assert client.get("/graph/edges/ped-edge").json()["pedestrian_count"] == 1
+
+
+def test_hazard_observation_penalizes_its_mapped_edge() -> None:
+    with TestClient(app) as client:
+        assert client.post("/graph/edges", json={"edge_id": "hazard-edge", "source": "sumo"}).status_code == 201
+        response = client.post(
+            "/v1/ingest/hazard-observation",
+            json={
+                "hazard_id": "pothole-1",
+                "timestamp_utc": datetime.now(UTC).isoformat(),
+                "hazard_type": "pothole",
+                "road_segment_id": "hazard-edge",
+                "position": {
+                    "lat": 12.97,
+                    "lon": 77.59,
+                    "uncertainty_m": 1.0,
+                    "confidence": 0.9,
+                    "source": "rsu",
+                },
+                "confidence": 0.9,
+                "reporting_source": "rsu-1",
+                "evidence": {"severity": 0.8},
+            },
+        )
+        assert response.status_code == 202
+        assert round(client.get("/graph/edges/hazard-edge").json()["hazard_penalty"], 2) == 0.72

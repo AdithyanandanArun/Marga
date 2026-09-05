@@ -23,6 +23,10 @@ class HazardObservation(BaseModel):
             "'stalled_vehicle', 'wrong_way', 'emergency_vehicle'"
         ),
     )
+    road_segment_id: str | None = Field(
+        None,
+        description="Canonical OSM/SUMO edge ID when the observation is map matched",
+    )
     position: PositionEstimate = Field(..., description="Estimated hazard position")
     confidence: float = Field(..., description="Detection confidence in [0, 1]")
     expires_at: Optional[datetime] = Field(
