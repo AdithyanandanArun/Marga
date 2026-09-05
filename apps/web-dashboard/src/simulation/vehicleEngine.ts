@@ -141,8 +141,10 @@ export class JunctionSimEngine {
   }
   private nextIncidentId = 0;
 
-  private static readonly STALL_ACCIDENT_MS = 12_000;
-  private static readonly ACCIDENT_CLEARANCE_MS = 6_000;
+  /** A collision/blockage is kept visible for ten seconds, then removed so
+   * the queue can recover instead of freezing the whole approach. */
+  private static readonly STALL_ACCIDENT_MS = 10_000;
+  private static readonly ACCIDENT_CLEARANCE_MS = 0;
   /** Per-body inflation for the movement sweep, so the real gap enforced is
    * twice this. Car-following owns comfortable headway (3-5 m); this guard
    * only has to stop bodies visibly intersecting, and a larger value makes
@@ -154,6 +156,10 @@ export class JunctionSimEngine {
   /** Minimum heading difference for two vehicles to count as crossing rather
    * than following. Below this, car-following owns the spacing. */
   private static readonly CROSSING_CONFLICT_MIN_DEG = 30;
+  /** Centre-to-centre horizon used by the conflict gate. Body overlap is
+   * checked separately by the swept footprint guard; using a larger radius
+   * here makes harmless near-misses negotiate forever on a busy roundabout. */
+  private static readonly CROSSING_CONFLICT_RADIUS_M = 4.8;
   /** Space that must exist beyond the level crossing before a vehicle may
    * enter it — one vehicle length plus a standing buffer. */
   private static readonly CROSSING_EXIT_CLEARANCE_M = 9;
@@ -531,21 +537,15 @@ export class JunctionSimEngine {
         if (vehicle.stopReason !== 'ACCIDENT') vehicle.stopReason = null;
         continue;
       }
-      // Do not promote a normal yield into an accident. A reported incident
-      // needs both a physical conflict hold and a road user trapped behind it.
-      const entry = vehicle.route.path[0];
-      const blocksFollower = this.vehicles.some((other) => other !== vehicle
-        && other.progress < vehicle.progress
-        && distanceMeters(other.route.path[0], entry, this.junction.center[1]) < 1
-        && (vehicle.progress - other.progress) * other.sampled.totalLength < 35);
-      if (vehicle.stopReason !== 'CONFLICT' || !blocksFollower) {
-        vehicle.stoppedSinceMs = null;
-        continue;
-      }
+      // A vehicle that is completely stationary on an unsignalised road is
+      // not a valid steady state. It may be a conflict hold, a failed lane
+      // merge, or a blocked seam transfer; all three must eventually produce
+      // a recoverable incident instead of freezing the whole stream behind it.
       if (vehicle.stoppedSinceMs === null) vehicle.stoppedSinceMs = this.clockMs;
       const stationaryForMs = this.clockMs - vehicle.stoppedSinceMs;
       if (stationaryForMs < JunctionSimEngine.STALL_ACCIDENT_MS) continue;
 
+      const blockageReason = vehicle.stopReason;
       vehicle.incidentReported = true;
       vehicle.retireAtMs = this.clockMs + JunctionSimEngine.ACCIDENT_CLEARANCE_MS;
       vehicle.stopReason = 'ACCIDENT';
@@ -565,7 +565,9 @@ export class JunctionSimEngine {
         detectedAtMs: this.clockMs,
         confidence: 0.9,
         evidence: {
-          classification: 'sustained_uncontrolled_lane_blockage',
+          classification: blockageReason === 'CONFLICT'
+            ? 'sustained_uncontrolled_lane_blockage'
+            : 'stationary_vehicle_blockage',
           stationary_for_s: Math.round(stationaryForMs / 100) / 10,
           affected_actor_ids: affectedActorIds,
         },
@@ -582,15 +584,26 @@ export class JunctionSimEngine {
   /** A lane change is allowed only if the whole vehicle body can enter it
    * without cutting off either a faster follower or oncoming traffic. */
   private canUseAdjacentLane(vehicle: SimVehicle, laneOffsetM: number, clearanceM: number): boolean {
-    const candidate = this.positionFor(vehicle, vehicle.progress, laneOffsetM);
-    return !this.vehicles.some((other) => {
-      if (other === vehicle) return false;
-      const separation = distanceMeters(candidate, this.positionFor(other), this.junction.center[1]);
-      if (separation >= clearanceM) return false;
-      const headingDelta = Math.abs((((vehicle.sampled.headingAt(vehicle.progress) - other.sampled.headingAt(other.progress)) + 540) % 360) - 180);
-      // Opposing road users need significantly more headway than a vehicle
-      // in the same direction because their closing speed is much higher.
-      return headingDelta > 100 || separation < clearanceM;
+    const candidate = this.pose(vehicle, vehicle.progress, laneOffsetM);
+    const heading = vehicle.sampled.headingAt(vehicle.progress);
+    const rad = heading * Math.PI / 180;
+    const forward = [Math.sin(rad), Math.cos(rad)];
+    const lateral = [Math.cos(rad), -Math.sin(rad)];
+    return ![...this.bodies(), ...this.externalBodies()].some((other) => {
+      if (other.id === vehicle.id) return false;
+      const dx = (other.position[0] - candidate.position[0]) * 111320
+        * Math.cos(candidate.position[1] * Math.PI / 180);
+      const dy = (other.position[1] - candidate.position[1]) * 111320;
+      const along = dx * forward[0] + dy * forward[1];
+      const across = Math.abs(dx * lateral[0] + dy * lateral[1]);
+      const headingDelta = Math.abs(((heading - other.heading + 540) % 360) - 180);
+      // A body overlap is never allowed, regardless of direction.
+      if (bodiesOverlap(candidate, other, 0.1)) return true;
+      // Passing uses the right-hand adjacent lane. An oncoming road user in
+      // that lane blocks the manoeuvre even when the rectangles do not yet
+      // touch; wait behind the leader until the opposing vehicle has cleared.
+      if (headingDelta > 100 && Math.abs(along) < clearanceM * 3 && across < 9) return true;
+      return false;
     });
   }
 
@@ -619,8 +632,29 @@ export class JunctionSimEngine {
         const headway = standstillGap + v.speed * 1.1;
         // Maintain bumper clearance even when different routes share a lane.
         const safe = Math.max(0, (leader?.speed ?? 0) + (gap - headway) * 0.65);
-        v.targetSpeed = Math.min(v.targetSpeed, safe,
-          Math.sqrt(2 * SPEED_PROFILE[v.actorType].brakeDecel * Math.max(0, gap - standstillGap)));
+        const brakingSpeed = Math.sqrt(2 * SPEED_PROFILE[v.actorType].brakeDecel * Math.max(0, gap - standstillGap));
+        const passingLane = v.laneOffsetM + 3.2;
+        const closeToStopLine = v.route.stopLineFraction !== null
+          && v.progress >= v.route.stopLineFraction - 0.06;
+        // Only a same-route leader can be passed. At a railway approach the
+        // opposite lane is checked geometrically; if it is occupied, remain
+        // behind the leader and brake smoothly instead of crossing through it.
+        const blockedLeader = Boolean(leader && leader.speed < 0.5 && !this.expectedControlHold(leader));
+        const canPass = Boolean(leader && leader.route.id === v.route.id
+          && leader.progress > v.progress
+          && (v.speed > (leader.speed + 1.5) || blockedLeader)
+          && gap < 28
+          // Keep the queue disciplined only near the actual stop line. A
+          // green gate that is nearing its change must not make traffic stop
+          // hundreds of metres back or prevent a safe pass upstream.
+          && !(this.requiresStopAtLine(v) && closeToStopLine)
+          && this.canUseAdjacentLane(v, passingLane, 12));
+        if (canPass) {
+          v.targetLaneOffsetM = passingLane;
+          v.targetSpeed = Math.min(v.targetSpeed, Math.max((leader?.speed ?? v.speed) + 1, v.speed));
+        } else {
+          v.targetSpeed = Math.min(v.targetSpeed, safe, brakingSpeed);
+        }
       }
       // Returning to lane must be collision checked just like overtaking.
       if (v.laneOffsetM !== 0 && this.canUseAdjacentLane(v, 0, 12)) v.targetLaneOffsetM = 0;
@@ -652,7 +686,7 @@ export class JunctionSimEngine {
         for (let t = 0; t <= horizonS; t += stepS) {
           const firstProgress = Math.min(1, first.progress + (first.speed * t) / first.sampled.totalLength);
           const secondProgress = Math.min(1, second.progress + (second.speed * t) / second.sampled.totalLength);
-          if (distanceMeters(this.positionFor(first, firstProgress), this.positionFor(second, secondProgress), this.junction.center[1]) < 6.5) {
+          if (distanceMeters(this.positionFor(first, firstProgress), this.positionFor(second, secondProgress), this.junction.center[1]) < JunctionSimEngine.CROSSING_CONFLICT_RADIUS_M) {
             conflictAt = t;
             break;
           }
@@ -703,7 +737,7 @@ export class JunctionSimEngine {
         // A real gap always lets it creep, which is how two drivers edging
         // into the same roundabout resolve who goes first.
         const separationM = distanceMeters(this.positionFor(first), this.positionFor(second), centerLat);
-        const distanceBeforeConflict = Math.max(0, separationM - 6.5);
+        const distanceBeforeConflict = Math.max(0, separationM - JunctionSimEngine.CROSSING_CONFLICT_RADIUS_M);
         const safeArrivalS = conflictAt + 1.5;
         yielding.targetSpeed = Math.min(yielding.targetSpeed, distanceBeforeConflict / Math.max(0.5, safeArrivalS));
         yielding.targetLaneOffsetM = 0;

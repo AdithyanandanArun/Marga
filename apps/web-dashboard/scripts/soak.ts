@@ -34,9 +34,9 @@ const DT_MS = 33;
 const SIM_MINUTES = 4;
 const TICKS = Math.round((SIM_MINUTES * 60_000) / DT_MS);
 // A vehicle is stuck when it covers less than STUCK_DISTANCE_M over a rolling
-// STALL_WINDOW seconds. A railway gate is closed for 30 s by design, so the
-// window must exceed that to avoid flagging a legitimate queue.
-const STALL_WINDOW_S = 20;
+// STALL_WINDOW seconds. The railway gate remains closed for 30 s by design, so
+// this observation window must be longer than that legitimate queue duration.
+const STALL_WINDOW_S = 40;
 const STALL_WINDOW_TICKS = Math.round((STALL_WINDOW_S * 1000) / DT_MS);
 const STUCK_DISTANCE_M = 1.0;
 
