@@ -9,6 +9,7 @@ import { LayerControls } from './LayerControls';
 import { WorldStream } from '../net/worldStream';
 import { V2XStream } from '../net/v2xClient';
 import { GraphStream } from '../net/graphClient';
+import { RouteStream } from '../net/routesClient';
 import { networkTelemetry } from '../simulation/networkTelemetry';
 import { useUIStore } from '../state/uiStore';
 import { useWorldStore } from '../state/worldStore';
@@ -55,12 +56,15 @@ export function Dashboard() {
     v2x.connect();
     const graph = new GraphStream();
     graph.connect();
+    const routes = new RouteStream();
+    routes.connect();
     const releaseTelemetry = networkTelemetry.retain();
     return () => {
       releaseTelemetry();
       stream.disconnect();
       v2x.disconnect();
       graph.disconnect();
+      routes.disconnect();
     };
   }, []);
 

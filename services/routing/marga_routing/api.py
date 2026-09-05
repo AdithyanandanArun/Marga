@@ -14,8 +14,7 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -23,7 +22,7 @@ from pydantic import BaseModel
 from .distributor import CooperativeDistributor
 from .graph import MobilityGraph
 from .mock_graph import build_mock_graph
-from .pathfinder import find_path, path_eta_s, path_to_geometry
+from .pathfinder import find_path, path_to_geometry
 from .store import RouteRecord, RouteStore
 
 log = logging.getLogger(__name__)
@@ -37,13 +36,40 @@ DEFAULT_ORIGIN = "rail_crossing"
 DEFAULT_DESTINATION = "roundabout"
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):  # type: ignore[type-arg]
+def initialize() -> None:
+    """Initialise routing once for either standalone or gateway hosting."""
     global _graph, _store, _distributor
+    if "_graph" in globals():
+        return
     _graph = build_mock_graph()
     _store = RouteStore()
     _distributor = CooperativeDistributor(_graph)
     log.info("Routing graph loaded: %d nodes, %d edges", _graph.node_count(), _graph.edge_count())
+
+
+def ingest_edge_state(edge: object) -> None:
+    """Adapt a canonical mobility-edge state without exposing its source type."""
+    initialize()
+    edge_id = str(edge.edge_id)
+    if _graph.edge(edge_id) is None:
+        return
+    _graph.ingest_metrics_dict(edge_id, {
+        "avg_speed_mps": edge.avg_speed_mps,
+        "vehicle_count": edge.vehicle_count,
+        "queue_length": edge.queue_length,
+        "capacity_ratio": edge.capacity_ratio,
+        "hazard_penalty": edge.hazard_penalty,
+        "gps_confidence": edge.gps_confidence,
+        "downstream_congestion": edge.downstream_congestion,
+        "two_wheeler_ratio": edge.two_wheeler_ratio,
+        "flow_rate_vph": edge.flow_rate_vph,
+        "occupancy": edge.occupancy,
+    })
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # type: ignore[type-arg]
+    initialize()
     yield
 
 
@@ -56,15 +82,15 @@ app = FastAPI(
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ── Request / response models ─────────────────────────────────────────────────
 
 class RecalculateRequest(BaseModel):
     vehicle_id: str
-    origin_node: Optional[str] = None       # defaults to DEFAULT_ORIGIN
-    destination_node: Optional[str] = None  # defaults to DEFAULT_DESTINATION
+    origin_node: str | None = None       # defaults to DEFAULT_ORIGIN
+    destination_node: str | None = None  # defaults to DEFAULT_DESTINATION
 
 
 class RecalculateResponse(BaseModel):
@@ -215,7 +241,7 @@ async def stream_routes(ws: WebSocket) -> None:
             payload = await asyncio.wait_for(queue.get(), timeout=30.0)
             change = json.loads(payload)
             await ws.send_json({"event_type": "route.changed", "data": change})
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await ws.send_json({"event_type": "routing.ping", "ts": _now()})
     except WebSocketDisconnect:
         pass

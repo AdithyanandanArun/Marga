@@ -1,5 +1,6 @@
 import type { VehicleState, TrafficSignalState, ActorType } from '../types/canonical';
 import { distanceMeters, samplePath, type Point, type SampledPath } from './geometry';
+import { bodiesOverlap, dimensions, type BodyPose } from './vehicleBody';
 import type { JunctionDefinition, RouteDef } from './junctionDefs';
 
 const SPAWNABLE_TYPES: ActorType[] = ['CAR', 'BIKE', 'AUTO', 'BUS', 'TRUCK'];
@@ -27,6 +28,20 @@ const SPEED_PROFILE: Record<ActorType, SpeedProfile> = {
 };
 
 type SimState = 'CRUISE' | 'BURST' | 'BRAKE' | 'STOPPED';
+type StopReason = 'CONTROL' | 'QUEUE' | 'CONFLICT' | 'ACCIDENT' | null;
+
+export interface SimulationIncident {
+  incidentId: string;
+  classification: 'ACCIDENT';
+  actorId: string;
+  affectedActorIds: string[];
+  reroutedActorIds: string[];
+  roadSegmentId: string;
+  position: Point;
+  detectedAtMs: number;
+  confidence: number;
+  evidence: Record<string, number | string | string[]>;
+}
 
 interface SimVehicle {
   id: string;
@@ -36,11 +51,16 @@ interface SimVehicle {
   progress: number;
   speed: number;
   targetSpeed: number;
+  desiredSpeed: number;
   state: SimState;
   nextDecisionAt: number;
   weavePhase: number;
   laneOffsetM: number;
   targetLaneOffsetM: number;
+  stoppedSinceMs: number | null;
+  stopReason: StopReason;
+  incidentReported: boolean;
+  retireAtMs: number | null;
 }
 
 export interface TransferredVehicle {
@@ -78,6 +98,21 @@ export class JunctionSimEngine {
   private readonly junctionId: string;
   private clockMs = 0;
   private nextId = 0;
+  private pendingSpawns = 0;
+  private externalBodies: () => BodyPose[] = () => [];
+
+  setExternalBodies(provider: () => BodyPose[]): void { this.externalBodies = provider; }
+  bodies(): BodyPose[] { return this.vehicles.map(v => this.pose(v)); }
+  private pose(v: SimVehicle, progress = v.progress, lane = v.laneOffsetM): BodyPose {
+    return { id: v.id, type: v.actorType, position: this.positionFor(v, progress, lane), heading: v.sampled.headingAt(progress) };
+  }
+  private clearBody(body: BodyPose, margin = 0.3): boolean {
+    return ![...this.bodies(), ...this.externalBodies()].some(other => other.id !== body.id && bodiesOverlap(body, other, margin));
+  }
+  private nextIncidentId = 0;
+
+  private static readonly STALL_ACCIDENT_MS = 12_000;
+  private static readonly ACCIDENT_CLEARANCE_MS = 6_000;
 
   constructor(opts: EngineOptions) {
     this.junction = opts.junction;
@@ -99,28 +134,52 @@ export class JunctionSimEngine {
   }
 
   setVehicleCount(count: number): void {
-    while (this.vehicles.length < count) this.vehicles.push(this.spawnVehicle(Math.random()));
+    this.pendingSpawns = Math.max(0, count - this.vehicles.length);
+    while (this.pendingSpawns > 0) {
+      const vehicle = this.spawnVehicle(Math.random());
+      if (!vehicle) break;
+      this.vehicles.push(vehicle);
+      this.pendingSpawns--;
+    }
     if (this.vehicles.length > count) this.vehicles.length = count;
   }
 
-  private spawnVehicle(progress: number): SimVehicle {
-    const route = this.chooseRoute(this.junction.routes);
-    const actorType = pick(SPAWNABLE_TYPES);
-    const profile = SPEED_PROFILE[actorType];
-    return {
-      id: `${this.actorIdPrefix}-${this.nextId++}`,
-      actorType,
-      route,
-      sampled: samplePath(route.path, this.junction.center[1]),
-      progress,
-      speed: randRange(profile.cruiseMin, profile.cruiseMax),
-      targetSpeed: randRange(profile.cruiseMin, profile.cruiseMax),
-      state: 'CRUISE',
-      nextDecisionAt: 0,
-      weavePhase: Math.random() * Math.PI * 2,
-      laneOffsetM: 0,
-      targetLaneOffsetM: 0,
-    };
+  private spawnVehicle(progress: number): SimVehicle | null {
+    let candidate: SimVehicle | null = null;
+    // Initial random placement used to allow two bodies to spawn on top of
+    // one another. Prefer a clear legal route; only fall back after bounded
+    // attempts so a deliberately dense scenario can still start.
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const route = this.chooseRoute(this.junction.routes);
+      const actorType = pick(SPAWNABLE_TYPES);
+      const profile = SPEED_PROFILE[actorType];
+      candidate = {
+        id: `${this.actorIdPrefix}-${this.nextId++}`,
+        actorType,
+        route,
+        sampled: samplePath(route.path, this.junction.center[1]),
+        progress,
+        speed: randRange(profile.cruiseMin, profile.cruiseMax),
+        targetSpeed: randRange(profile.cruiseMin, profile.cruiseMax),
+        desiredSpeed: randRange(profile.cruiseMin, profile.cruiseMax),
+        state: 'CRUISE',
+        nextDecisionAt: 0,
+        weavePhase: Math.random() * Math.PI * 2,
+        laneOffsetM: 0,
+        targetLaneOffsetM: 0,
+        stoppedSinceMs: null,
+        stopReason: null,
+        incidentReported: false,
+        retireAtMs: null,
+      };
+      if (this.clearBody(this.pose(candidate), 1.5)) return candidate;
+    }
+    return null;
+  }
+
+  private isPositionClear(position: Point, clearanceM: number, exclude?: SimVehicle): boolean {
+    return !this.vehicles.some((other) => other !== exclude
+      && distanceMeters(position, this.positionFor(other), this.junction.center[1]) < clearanceM);
   }
 
   private signalPhase(): 'A' | 'B' | 'NONE' {
@@ -160,13 +219,13 @@ export class JunctionSimEngine {
     return distanceToStopM <= 0.75 ? 0 : Math.sqrt(2 * brakeDecel * distanceToStopM);
   }
 
-  private positionFor(v: SimVehicle, progress = v.progress): Point {
+  private positionFor(v: SimVehicle, progress = v.progress, laneOffsetM = v.laneOffsetM): Point {
     const point = v.sampled.pointAt(progress);
     const heading = v.sampled.headingAt(progress) * Math.PI / 180;
     const lonScale = 111_320 * Math.cos(point[1] * Math.PI / 180);
     return [
-      point[0] + Math.cos(heading) * v.laneOffsetM / lonScale,
-      point[1] - Math.sin(heading) * v.laneOffsetM / 111_320,
+      point[0] + Math.cos(heading) * laneOffsetM / lonScale,
+      point[1] - Math.sin(heading) * laneOffsetM / 111_320,
     ];
   }
 
@@ -184,16 +243,91 @@ export class JunctionSimEngine {
     );
     if (!candidates.length) return false;
     const route = congestionAware ? this.leastLoadedRoute(candidates) : pick(candidates);
+    const entrySample = samplePath(route.path, this.junction.center[1]);
+    if (!this.isPositionClear(entrySample.pointAt(0), 7)) return false;
     const spawned = this.spawnVehicle(0);
-    Object.assign(spawned, { id: vehicle.actorId, actorType: vehicle.actorType, route, sampled: samplePath(route.path, this.junction.center[1]), progress: 0 });
+    if (!spawned) return false;
+    Object.assign(spawned, { id: vehicle.actorId, actorType: vehicle.actorType, route, sampled: entrySample, progress: 0 });
+    if (!this.clearBody(this.pose(spawned), 0.5)) return false;
     this.vehicles.push(spawned);
     return true;
   }
 
   respawn(vehicle: TransferredVehicle): void {
     const spawned = this.spawnVehicle(0);
+    if (!spawned) { this.pendingSpawns++; return; }
     Object.assign(spawned, { id: vehicle.actorId, actorType: vehicle.actorType });
+    if (!this.clearBody(this.pose(spawned), 1.5)) { this.pendingSpawns++; return; }
     this.vehicles.push(spawned);
+  }
+
+  private rerouteFollowers(blocked: SimVehicle): string[] {
+    const entry = blocked.route.path[0];
+    const rerouted: string[] = [];
+    for (const vehicle of this.vehicles) {
+      if (vehicle === blocked || vehicle.progress >= blocked.progress || vehicle.progress > 0.35) continue;
+      if (distanceMeters(vehicle.route.path[0], entry, this.junction.center[1]) >= 1) continue;
+      const previousRoute = vehicle.route.id;
+      if (this.rerouteFromEntry(vehicle) && vehicle.route.id !== previousRoute) rerouted.push(vehicle.id);
+    }
+    return rerouted;
+  }
+
+  /** A red signal or closed gate is a legitimate queue, never an accident. */
+  private expectedControlHold(vehicle: SimVehicle): boolean {
+    return this.requiresStopAtLine(vehicle);
+  }
+
+  private identifyStalledIncidents(): SimulationIncident[] {
+    const incidents: SimulationIncident[] = [];
+    for (const vehicle of this.vehicles) {
+      if (vehicle.incidentReported || vehicle.retireAtMs !== null) continue;
+      if (this.expectedControlHold(vehicle) || vehicle.speed > 0.15) {
+        vehicle.stoppedSinceMs = null;
+        if (vehicle.stopReason !== 'ACCIDENT') vehicle.stopReason = null;
+        continue;
+      }
+      // Do not promote a normal yield into an accident. A reported incident
+      // needs both a physical conflict hold and a road user trapped behind it.
+      const entry = vehicle.route.path[0];
+      const blocksFollower = this.vehicles.some((other) => other !== vehicle
+        && other.progress < vehicle.progress
+        && distanceMeters(other.route.path[0], entry, this.junction.center[1]) < 1
+        && (vehicle.progress - other.progress) * other.sampled.totalLength < 35);
+      if (vehicle.stopReason !== 'CONFLICT' || !blocksFollower) {
+        vehicle.stoppedSinceMs = null;
+        continue;
+      }
+      if (vehicle.stoppedSinceMs === null) vehicle.stoppedSinceMs = this.clockMs;
+      const stationaryForMs = this.clockMs - vehicle.stoppedSinceMs;
+      if (stationaryForMs < JunctionSimEngine.STALL_ACCIDENT_MS) continue;
+
+      vehicle.incidentReported = true;
+      vehicle.retireAtMs = this.clockMs + JunctionSimEngine.ACCIDENT_CLEARANCE_MS;
+      vehicle.stopReason = 'ACCIDENT';
+      vehicle.state = 'STOPPED';
+      vehicle.speed = 0;
+      vehicle.targetSpeed = 0;
+      const reroutedActorIds = this.rerouteFollowers(vehicle);
+      const affectedActorIds = [vehicle.id, ...reroutedActorIds];
+      incidents.push({
+        incidentId: `${this.junctionId}-accident-${this.nextIncidentId++}`,
+        classification: 'ACCIDENT',
+        actorId: vehicle.id,
+        affectedActorIds,
+        reroutedActorIds,
+        roadSegmentId: `${this.junctionId}:${vehicle.route.id}`,
+        position: this.positionFor(vehicle),
+        detectedAtMs: this.clockMs,
+        confidence: 0.9,
+        evidence: {
+          classification: 'sustained_uncontrolled_lane_blockage',
+          stationary_for_s: Math.round(stationaryForMs / 100) / 10,
+          affected_actor_ids: affectedActorIds,
+        },
+      });
+    }
+    return incidents;
   }
 
   isCongested(): boolean {
@@ -201,52 +335,87 @@ export class JunctionSimEngine {
     return stopped >= 2 || this.vehicles.length >= 10;
   }
 
+  /** A lane change is allowed only if the whole vehicle body can enter it
+   * without cutting off either a faster follower or oncoming traffic. */
+  private canUseAdjacentLane(vehicle: SimVehicle, laneOffsetM: number, clearanceM: number): boolean {
+    const candidate = this.positionFor(vehicle, vehicle.progress, laneOffsetM);
+    return !this.vehicles.some((other) => {
+      if (other === vehicle) return false;
+      const separation = distanceMeters(candidate, this.positionFor(other), this.junction.center[1]);
+      if (separation >= clearanceM) return false;
+      const headingDelta = Math.abs((((vehicle.sampled.headingAt(vehicle.progress) - other.sampled.headingAt(other.progress)) + 540) % 360) - 180);
+      // Opposing road users need significantly more headway than a vehicle
+      // in the same direction because their closing speed is much higher.
+      return headingDelta > 100 || separation < clearanceM;
+    });
+  }
+
   /** Car-following and overtaking policy for vehicles sharing a directed
    * route. A faster follower moves smoothly into a free adjacent lane; if it
    * cannot, it brakes behind the leader instead of occupying the same body. */
   private applyFollowingPhysics(): void {
-    const routes = new Map<string, SimVehicle[]>();
-    for (const vehicle of this.vehicles) {
-      // A route splits at the junction, but vehicles sharing its entry arm
-      // are still in the same physical lane until that split. Grouping by the
-      // entry point makes following/overtaking work for cars that intend to
-      // turn differently, rather than only for identical end-to-end routes.
-      const entry = vehicle.route.path[0];
-      const entryHeading = Math.round(vehicle.sampled.headingAt(0) / 15) * 15;
-      const corridorKey = `${entry[0].toFixed(6)}:${entry[1].toFixed(6)}:${entryHeading}`;
-      const group = routes.get(corridorKey) ?? [];
-      group.push(vehicle);
-      routes.set(corridorKey, group);
+    for (const v of this.vehicles) {
+      const own = this.pose(v), rad = own.heading * Math.PI / 180;
+      const forward = [Math.sin(rad), Math.cos(rad)];
+      const lateral = [Math.cos(rad), -Math.sin(rad)];
+      const size = dimensions(v.actorType);
+      for (const other of [...this.bodies(), ...this.externalBodies()]) {
+        if (other.id === v.id) continue;
+        const dx = (other.position[0] - own.position[0]) * 111320 * Math.cos(own.position[1] * Math.PI / 180);
+        const dy = (other.position[1] - own.position[1]) * 111320;
+        const along = dx * forward[0] + dy * forward[1];
+        const across = Math.abs(dx * lateral[0] + dy * lateral[1]);
+        const otherSize = dimensions(other.type);
+        const headingDelta = Math.abs(((own.heading - other.heading + 540) % 360) - 180);
+        if (along <= 0 || along > 60 || headingDelta > 45 ||
+            across > (size.width + otherSize.width) / 2 + 0.4) continue;
+        const leader = this.vehicles.find(x => x.id === other.id);
+        const gap = along - (size.length + otherSize.length) / 2;
+        const standstillGap = this.requiresStopAtLine(v) ? 5 : 3;
+        const headway = standstillGap + v.speed * 1.1;
+        // Maintain bumper clearance even when different routes share a lane.
+        const safe = Math.max(0, (leader?.speed ?? 0) + (gap - headway) * 0.65);
+        v.targetSpeed = Math.min(v.targetSpeed, safe,
+          Math.sqrt(2 * SPEED_PROFILE[v.actorType].brakeDecel * Math.max(0, gap - standstillGap)));
+      }
+      // Returning to lane must be collision checked just like overtaking.
+      if (v.laneOffsetM !== 0 && this.canUseAdjacentLane(v, 0, 12)) v.targetLaneOffsetM = 0;
     }
-    for (const group of routes.values()) {
-      group.sort((a, b) => b.progress - a.progress);
-      for (let index = 1; index < group.length; index++) {
-        const leader = group[index - 1];
-        const follower = group[index];
-        const gapM = (leader.progress - follower.progress) * follower.sampled.totalLength;
-        const desiredGapM = 5.5 + follower.speed * 1.15;
-        const isClosing = follower.speed > leader.speed + 0.8;
-        const alternateLane = follower.laneOffsetM >= 0 ? -2.2 : 2.2;
-        const laneClear = !group.some((other) => other !== follower
-          && Math.abs(other.progress - follower.progress) * follower.sampled.totalLength < desiredGapM * 1.3
-          && Math.abs(other.laneOffsetM - alternateLane) < 1.2);
-        // Do not overtake after the routes have begun to split through the
-        // junction; at that point yielding/braking is the safe action.
-        const beforeJunctionSplit = follower.progress < 0.42 && leader.progress < 0.52;
-        if (gapM < desiredGapM && isClosing && beforeJunctionSplit && laneClear) {
-          follower.targetLaneOffsetM = alternateLane;
-          follower.state = 'CRUISE';
-        } else if (gapM < desiredGapM && Math.abs(follower.laneOffsetM - leader.laneOffsetM) < 1.2) {
-          // A stationary queue near the entry is a network-level rerouting
-          // trigger. The replacement route has the same physical entry arm,
-          // so this is a turn decision before the junction, not a teleport.
-          if (leader.speed < 1.5 && follower.progress < 0.25 && this.rerouteFromEntry(follower)) continue;
-          follower.targetLaneOffsetM = 0;
-          follower.targetSpeed = Math.min(follower.targetSpeed, Math.max(0, leader.speed - (desiredGapM - gapM) * 0.7));
-          follower.state = 'BRAKE';
-        } else if (gapM > desiredGapM * 1.8) {
-          follower.targetLaneOffsetM = 0;
+  }
+
+  /** Predict pairwise proximity before vehicles enter a shared junction.
+   * The earlier implementation waited until bodies were already inside the
+   * conflict area. This uses a short rolling horizon so a driver eases off
+   * before the point of conflict, which is how assertive traffic still avoids
+   * a crash. */
+  private applyPredictiveCollisionAvoidance(): void {
+    const horizonS = 4.5;
+    const stepS = 0.25;
+    for (let i = 0; i < this.vehicles.length; i++) {
+      const first = this.vehicles[i];
+      for (let j = i + 1; j < this.vehicles.length; j++) {
+        const second = this.vehicles[j];
+        if (first.route.id === second.route.id) continue;
+        let conflictAt: number | null = null;
+        for (let t = 0; t <= horizonS; t += stepS) {
+          const firstProgress = Math.min(1, first.progress + (first.speed * t) / first.sampled.totalLength);
+          const secondProgress = Math.min(1, second.progress + (second.speed * t) / second.sampled.totalLength);
+          if (distanceMeters(this.positionFor(first, firstProgress), this.positionFor(second, secondProgress), this.junction.center[1]) < 6.5) {
+            conflictAt = t;
+            break;
+          }
         }
+        if (conflictAt === null) continue;
+        // Both paths occupy the same point in the same prediction slice; a
+        // stable priority choice avoids the "both yield, then both go"
+        // oscillation that produces unrealistic intersection deadlocks.
+        const yielding = first.id > second.id ? first : second;
+        const distanceBeforeConflict = Math.max(0, yielding.speed * conflictAt - 5.5);
+        const safeArrivalS = conflictAt + 1.5;
+        yielding.targetSpeed = Math.min(yielding.targetSpeed, distanceBeforeConflict / Math.max(0.5, safeArrivalS));
+        yielding.targetLaneOffsetM = 0;
+        yielding.state = 'BRAKE';
+        yielding.stopReason = 'CONFLICT';
       }
     }
   }
@@ -255,51 +424,24 @@ export class JunctionSimEngine {
    * area. This is deliberately independent of the risk-alert layer: alerts
    * explain a predicted conflict, while this is the simulator's vehicle-body
    * safety constraint that prevents visual phasing. */
-  private applyConflictYielding(): void {
-    for (let index = 0; index < this.vehicles.length; index++) {
-      const first = this.vehicles[index];
-      const firstPosition = first.sampled.pointAt(first.progress);
-      for (let otherIndex = index + 1; otherIndex < this.vehicles.length; otherIndex++) {
-        const second = this.vehicles[otherIndex];
-        if (first.route.id === second.route.id) continue;
-        const secondPosition = second.sampled.pointAt(second.progress);
-        const currentDistance = distanceMeters(firstPosition, secondPosition, this.junction.center[1]);
-        if (currentDistance > 16) continue;
-        const firstFuture = first.sampled.pointAt(Math.min(1, first.progress + (first.speed * 1.8) / first.sampled.totalLength));
-        const secondFuture = second.sampled.pointAt(Math.min(1, second.progress + (second.speed * 1.8) / second.sampled.totalLength));
-        const predictedDistance = distanceMeters(firstFuture, secondFuture, this.junction.center[1]);
-        if (currentDistance > 6 && predictedDistance > 3.5) continue;
-        // The vehicle farther from its own route's conflict area yields. A
-        // stable ID tie-break avoids both drivers alternately stopping.
-        const firstYields = first.progress < second.progress
-          || (Math.abs(first.progress - second.progress) < 0.03 && first.id > second.id);
-        const yielding = firstYields ? first : second;
-        const yieldingProfile = SPEED_PROFILE[yielding.actorType];
-        const yieldingDistance = Math.max(0, currentDistance - 5.0);
-        yielding.targetSpeed = Math.min(
-          yielding.targetSpeed,
-          Math.sqrt(2 * yieldingProfile.brakeDecel * yieldingDistance),
-        );
-        yielding.targetLaneOffsetM = 0;
-        yielding.state = 'BRAKE';
-      }
-    }
-  }
 
-  tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[]; exits: TransferredVehicle[] } {
+  tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[]; exits: TransferredVehicle[]; incidents: SimulationIncident[]; despawnedActorIds: string[] } {
     this.clockMs += dtMs;
     const dt = Math.min(0.5, dtMs / 1000);
     const now = this.clockMs;
 
     const exits: TransferredVehicle[] = [];
     const activeVehicles: SimVehicle[] = [];
+    const despawnedActorIds: string[] = [];
     for (const v of this.vehicles) {
       const profile = SPEED_PROFILE[v.actorType];
 
+      v.targetSpeed = v.desiredSpeed;
       const stopLimit = this.stopLineSpeedLimit(v, profile.brakeDecel);
       if (stopLimit !== null) {
         v.targetSpeed = Math.min(v.targetSpeed, stopLimit);
         v.state = stopLimit === 0 ? 'STOPPED' : 'BRAKE';
+        if (stopLimit === 0) v.stopReason = 'CONTROL';
       } else if (now >= v.nextDecisionAt) {
         const roll = Math.random();
         const burstChance = 0.1 + this.chaos * 0.3;
@@ -309,9 +451,10 @@ export class JunctionSimEngine {
           v.targetSpeed = randRange(profile.cruiseMax * 0.85, profile.burstMax);
           v.nextDecisionAt = now + randRange(700, 2000);
         } else if (roll < burstChance + brakeChance) {
-          const fullStop = Math.random() < 0.25 + this.chaos * 0.35;
-          v.state = fullStop ? 'STOPPED' : 'BRAKE';
-          v.targetSpeed = fullStop ? 0 : randRange(0, profile.cruiseMin * 0.7);
+          // Driver variability can produce firm braking, but cannot invent a
+          // stationary vehicle in the middle of an open road.
+          v.state = 'BRAKE';
+          v.targetSpeed = randRange(Math.max(0.8, profile.cruiseMin * 0.25), profile.cruiseMin * 0.7);
           v.nextDecisionAt = now + randRange(500, 1600);
         } else {
           v.state = 'CRUISE';
@@ -319,11 +462,13 @@ export class JunctionSimEngine {
           v.nextDecisionAt = now + randRange(1400, 3800);
         }
       }
-
+      if (stopLimit === null && now >= v.nextDecisionAt - 1) v.desiredSpeed = v.targetSpeed;
+      if (v.retireAtMs !== null) v.targetSpeed = 0;
     }
 
     this.applyFollowingPhysics();
-    this.applyConflictYielding();
+    this.applyPredictiveCollisionAvoidance();
+
 
     for (const v of this.vehicles) {
       const profile = SPEED_PROFILE[v.actorType];
@@ -334,22 +479,31 @@ export class JunctionSimEngine {
 
       const fracDelta = v.sampled.totalLength > 0 ? (v.speed * dt) / v.sampled.totalLength : 0;
       const proposedProgress = v.progress + fracDelta;
-      const proposedPosition = this.positionFor(v, proposedProgress);
-      const overlapsAnotherBody = this.vehicles.some((other) => other !== v
-        && distanceMeters(proposedPosition, this.positionFor(other), this.junction.center[1]) < 3.1);
-      if (overlapsAnotherBody) {
-        // Last safety envelope: never advance a body into an occupied space.
-        // Following physics will turn this into a queue on the next frame.
+      const laneDelta = v.targetLaneOffsetM - v.laneOffsetM;
+      const proposedLane = v.laneOffsetM + Math.sign(laneDelta) * Math.min(Math.abs(laneDelta), 0.8 * dt);
+      // Sweep both translation and heading; a long bus turning can otherwise
+      // clip a stopped scooter even when its end position appears clear.
+      let safe = true;
+      const steps = Math.max(4, Math.ceil(v.speed * dt / 0.4));
+      for (let step = 1; step <= steps; step++) {
+        const fraction = step / steps;
+        if (!this.clearBody(this.pose(v, v.progress + fracDelta * fraction,
+          v.laneOffsetM + (proposedLane - v.laneOffsetM) * fraction))) { safe = false; break; }
+      }
+      if (safe) {
+        v.progress = proposedProgress;
+        v.laneOffsetM = proposedLane;
+      } else {
         v.speed = 0;
         v.targetSpeed = 0;
         v.state = 'STOPPED';
-      } else {
-        v.progress = proposedProgress;
+        v.stopReason = this.expectedControlHold(v) ? 'QUEUE' : 'CONFLICT';
       }
-      v.weavePhase += dt;
-      const laneDelta = v.targetLaneOffsetM - v.laneOffsetM;
-      v.laneOffsetM += Math.sign(laneDelta) * Math.min(Math.abs(laneDelta), 1.8 * dt);
 
+      if (v.retireAtMs !== null && this.clockMs >= v.retireAtMs) {
+        despawnedActorIds.push(v.id);
+        continue;
+      }
       if (v.progress >= 1) {
         const position = v.sampled.pointAt(1);
         exits.push({ actorId: v.id, actorType: v.actorType, position });
@@ -358,13 +512,25 @@ export class JunctionSimEngine {
       activeVehicles.push(v);
     }
     this.vehicles = activeVehicles;
+    const incidents = this.identifyStalledIncidents();
+    // Exiting actors are handed to a neighbouring junction by
+    // JunctionNetworkEngine, so only retirements are replaced locally.  If
+    // we refilled every exit here and also handed it off, the district would
+    // slowly manufacture vehicles until every road gridlocked.
+    this.pendingSpawns += despawnedActorIds.length;
+    while (this.pendingSpawns > 0) {
+      const spawned = this.spawnVehicle(0);
+      if (!spawned) break;
+      this.vehicles.push(spawned);
+      this.pendingSpawns--;
+    }
 
     const nowIso = new Date().toISOString();
     const vehicles: VehicleState[] = this.vehicles.map((v) => {
       const pos = v.sampled.pointAt(v.progress);
       const heading = v.sampled.headingAt(v.progress);
       const profile = SPEED_PROFILE[v.actorType];
-      const weaveM = profile.weave ? Math.sin(v.weavePhase * 2.2) * profile.weave : 0;
+      const weaveM = 0;
       const lateralM = v.laneOffsetM + weaveM;
       const headingRadians = heading * Math.PI / 180;
       const lonScale = 111_320 * Math.cos(pos[1] * Math.PI / 180);
@@ -430,7 +596,7 @@ export class JunctionSimEngine {
       });
     }
 
-    return { vehicles, signals, exits };
+    return { vehicles, signals, exits, incidents, despawnedActorIds };
   }
 
   private leastLoadedRoute(candidates: RouteDef[]): RouteDef {
@@ -451,9 +617,13 @@ export class JunctionSimEngine {
     );
     const alternative = this.leastLoadedRoute(candidates);
     if (alternative.id === vehicle.route.id) return false;
+    const sampled = samplePath(alternative.path, this.junction.center[1]);
+    const progress = vehicle.progress * vehicle.sampled.totalLength / sampled.totalLength;
+    if (distanceMeters(sampled.pointAt(progress), vehicle.sampled.pointAt(vehicle.progress), this.junction.center[1]) > 0.05) return false;
+    if (Math.abs(sampled.headingAt(progress) - vehicle.sampled.headingAt(vehicle.progress)) > 1) return false;
     vehicle.route = alternative;
-    vehicle.sampled = samplePath(alternative.path, this.junction.center[1]);
-    vehicle.progress = Math.min(vehicle.progress, 0.25);
+    vehicle.sampled = sampled;
+    vehicle.progress = progress;
     vehicle.targetLaneOffsetM = 0;
     return true;
   }

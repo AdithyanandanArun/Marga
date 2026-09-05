@@ -55,7 +55,8 @@ export class RouteStream {
 
   private handleMessage(data: string): void {
     try {
-      const change = JSON.parse(data) as RouteChange;
+      const event = JSON.parse(data) as RouteChange | { event_type?: string; data?: RouteChange };
+      const change = 'data' in event && event.data ? event.data : event as RouteChange;
       if (change.vehicle_id) useRouteStore.getState().upsertChange(change);
     } catch {
       // routing service not ready or sent garbage — never fabricate a route.

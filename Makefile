@@ -43,7 +43,7 @@ $(VENV)/bin/activate:
 	$(PIP) install --upgrade pip
 
 install: $(VENV)/bin/activate
-	$(PIP) install -e ".[dev]" -e ./packages/schemas -e ./tools/osm-import -e ./services/signal-rl \
+	$(PIP) install -e ".[dev]" -e ./packages/schemas -e ./tools/osm-import -e ./services/signal-rl -e ./services/routing \
 		-e "./packages/persistence[dev]" -e "./packages/observability[fastapi]"
 
 bootstrap: install

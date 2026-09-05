@@ -1,5 +1,6 @@
 import { LineLayer, PolygonLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import type { VehicleState, PedestrianState, DynamicActorObservation } from '../../types/canonical';
+import { dimensions } from '../../simulation/vehicleBody';
 
 const ACTOR_COLORS: Record<string, [number, number, number]> = {
   CAR: [74, 125, 255],
@@ -19,8 +20,7 @@ type VehicleBody = { vehicle: VehicleState; polygon: [number, number][]; nose: [
 const METERS_PER_LAT = 111_320;
 function vehicleBody(vehicle: VehicleState): VehicleBody {
   const heading = vehicle.heading_deg * Math.PI / 180;
-  const length = vehicle.actor_type === 'BUS' ? 10 : vehicle.actor_type === 'TRUCK' ? 8 : vehicle.actor_type === 'BIKE' ? 2.2 : 4.6;
-  const width = vehicle.actor_type === 'BUS' ? 2.6 : vehicle.actor_type === 'BIKE' ? 0.9 : 1.9;
+  const { length, width } = dimensions(vehicle.actor_type);
   const north = Math.cos(heading);
   const east = Math.sin(heading);
   const sideNorth = -east;
