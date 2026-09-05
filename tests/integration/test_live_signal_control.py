@@ -11,7 +11,12 @@ from packages.schemas.canonical import ActorType, Position, SourceType, TrafficS
 from packages.schemas.mobility_graph import GraphEdgeDefinition
 from packages.schemas.signal_control import SignalApproachTopology, SignalJunctionTopology
 from services.gateway.app import app
-from services.gateway.signal_control import register_signal_executor, signal_controller
+from services.gateway.signal_control import (
+    _queue_command,
+    register_signal_executor,
+    reset_pending_commands,
+    signal_controller,
+)
 from services.mobility_graph import mobility_graph
 
 
@@ -33,6 +38,10 @@ def _vehicle(actor_id: str, edge_id: str, speed_mps: float) -> VehicleState:
 def _reset() -> None:
     mobility_graph.__init__()
     signal_controller.clear()
+    reset_pending_commands()
+    # Other tests swap the executor; restore the shipped one so the queue that
+    # delivers applied actions to the simulator is what is under test.
+    register_signal_executor(_queue_command)
 
 
 def test_live_signal_decision_uses_graph_evidence_and_adapter_executor() -> None:
@@ -113,3 +122,48 @@ def test_gateway_exposes_graph_driven_signal_endpoints() -> None:
         body = recommendation.json()
         assert body["decision"]["policy_version"] == "tabular-q-learning-v1"
         assert body["decision"]["evidence"]
+
+
+def test_applied_action_is_queued_for_the_simulator_to_drain() -> None:
+    """An applied RL action must reach a simulator that cannot be called directly."""
+    _reset()
+    mobility_graph.register_edge(GraphEdgeDefinition(edge_id="west-in", intersection_id="junction-3", source="sumo"))
+    mobility_graph.observe_vehicle(_vehicle("bike-w", "west-in", speed_mps=0.4))
+    with TestClient(app) as client:
+        assert client.post(
+            "/v1/signals/topologies",
+            json={
+                "junction_id": "junction-3",
+                "signal_id": "tls-3",
+                "approaches": [{"movement_id": "W", "incoming_edge_ids": ["west-in"]}],
+                "source": "junction-network-simulator",
+            },
+        ).status_code == 201
+        assert "junction-3" in client.get("/v1/signals/topologies").json()["junction_ids"]
+        assert client.post(
+            "/v1/ingest/signal-state",
+            json={
+                "signal_id": "tls-3",
+                "intersection_id": "junction-3",
+                "ts": datetime.now(UTC).isoformat(),
+                "position": {"lat": 12.9716, "lon": 77.5946},
+                "current_phase": "EW_GREEN",
+                "phase_remaining_s": 20.0,
+                "source": "SIMULATION",
+            },
+        ).status_code == 202
+
+        applied = client.post("/v1/signals/junction-3/apply", json={"action": "EXTEND_GREEN_5"})
+        assert applied.status_code == 200
+        assert applied.json()["decision"]["applied"] is True
+        assert applied.json()["decision"]["application_error"] is None
+
+        drained = client.get("/v1/signals/commands/pending").json()
+        assert drained["count"] == 1
+        command = drained["commands"][0]
+        assert command["signal_id"] == "tls-3"
+        assert command["action"] == "EXTEND_GREEN_5"
+        assert command["duration_s"] > 20.0
+
+        # Draining is destructive so the simulator never replays an action.
+        assert client.get("/v1/signals/commands/pending").json()["count"] == 0

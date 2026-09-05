@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException
@@ -33,6 +34,39 @@ signal_controller = LiveSignalController(mobility_graph, _load_policy())
 def register_signal_executor(executor: Callable[[dict[str, object]], None] | None) -> None:
     """Connect a SimulationAdapter/RSU command sink to the live controller."""
     signal_controller.register_executor(executor)
+
+
+# ---------------------------------------------------------------------------
+# Applied-action delivery to a simulator that cannot be called synchronously.
+#
+# The browser junction simulator is not reachable from the gateway, so applied
+# RL actions are queued here and drained by the simulator on its own tick. A
+# bounded queue keeps a disconnected simulator from growing memory without
+# limit, and draining is destructive so one action is never applied twice.
+# ---------------------------------------------------------------------------
+
+_MAX_PENDING_COMMANDS = 256
+_pending_commands: list[dict[str, Any]] = []
+
+
+def _queue_command(command: dict[str, object]) -> None:
+    _pending_commands.append({**command, "issued_at": datetime.now(UTC).isoformat()})
+    if len(_pending_commands) > _MAX_PENDING_COMMANDS:
+        del _pending_commands[:-_MAX_PENDING_COMMANDS]
+
+
+def pending_command_count() -> int:
+    return len(_pending_commands)
+
+
+def reset_pending_commands() -> None:
+    _pending_commands.clear()
+
+
+# An applied action must reach the simulator by default; without this the
+# controller reports "no signal command executor registered" and RL decisions
+# never change a real phase.
+signal_controller.register_executor(_queue_command)
 
 
 class RecommendRequest(BaseModel):
@@ -90,6 +124,24 @@ def _observation_payload(junction_id: str) -> dict[str, Any]:
 @router.post("/topologies", status_code=201)
 async def register_topology(topology: SignalJunctionTopology) -> dict[str, Any]:
     return cast(dict[str, Any], signal_controller.register_topology(topology).model_dump(mode="json"))
+
+
+@router.get("/topologies")
+async def list_topologies() -> dict[str, Any]:
+    """Report which junctions the controller can actually act on."""
+    return {"junction_ids": list(signal_controller.junction_ids)}
+
+
+@router.get("/commands/pending")
+async def drain_pending_commands() -> dict[str, Any]:
+    """Drain applied signal commands for a simulator that polls the gateway.
+
+    Destructive by design: each command is delivered to exactly one caller so a
+    single simulator applies each RL action once.
+    """
+    commands = list(_pending_commands)
+    _pending_commands.clear()
+    return {"commands": commands, "count": len(commands)}
 
 
 @router.get("/{junction_id}/state")

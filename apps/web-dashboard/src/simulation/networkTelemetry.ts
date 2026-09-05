@@ -8,6 +8,10 @@ const SIMULATION_TIME_SCALE = 1.8;
 // 4 Hz is sufficient for the displayed road motion and keeps one browser
 // adapter from flooding the gateway with duplicate animation-frame updates.
 const TELEMETRY_INTERVAL_MS = 250;
+// Applied RL actions are drained on a slower cadence than telemetry; signal
+// phases change on the order of seconds, so 1 Hz is ample and keeps the
+// control loop clearly separated from the movement feed.
+const SIGNAL_COMMAND_INTERVAL_MS = 1000;
 const ACTOR_TYPE_FOR_ADAPTER: Record<VehicleState['actor_type'], string> = {
   CAR: 'car', BIKE: 'motorcycle', AUTO: 'auto_rickshaw', BUS: 'bus', TRUCK: 'truck', AMBULANCE: 'emergency', OTHER: 'other',
 };
@@ -34,6 +38,9 @@ class NetworkTelemetryRuntime {
   private feedState: FeedState = 'connecting';
   private references = 0;
   private paused = false;
+  private lastSignalPoll = 0;
+  private pollingSignals = false;
+  private topologiesRegistered = false;
 
   retain(onFrame?: (frame: NetworkFrame) => void, onStatus?: (status: FeedState) => void): () => void {
     this.references += 1;
@@ -57,8 +64,14 @@ class NetworkTelemetryRuntime {
 
   setVehicleCount(count: number): void { this.engine.setVehicleCount(count); }
   setChaos(chaos: number): void { this.engine.setChaos(chaos); }
-  reset(count: number): void { this.engine.reset(count); }
   setPaused(paused: boolean): void { this.paused = paused; }
+
+  reset(count: number): void {
+    this.engine.reset(count);
+    // A rebuilt network is a new set of junctions; re-announce them so the
+    // controller never acts on a topology that no longer exists.
+    this.topologiesRegistered = false;
+  }
 
   private ensureRunning(): void {
     if (this.frameHandle !== null) return;
@@ -75,9 +88,43 @@ class NetworkTelemetryRuntime {
           .catch(() => this.setFeedState('offline'))
           .finally(() => { this.publishing = false; });
       }
+      if (timestamp - this.lastSignalPoll >= SIGNAL_COMMAND_INTERVAL_MS && !this.pollingSignals) {
+        this.lastSignalPoll = timestamp;
+        this.pollingSignals = true;
+        void this.syncSignalControl().finally(() => { this.pollingSignals = false; });
+      }
       this.frameHandle = requestAnimationFrame(tick);
     };
     this.frameHandle = requestAnimationFrame(tick);
+  }
+
+  /** Announce junction topologies, then apply any RL actions the controller
+   * has already approved. Registration is retried until it succeeds so a
+   * simulator started before the gateway still becomes controllable. */
+  private async syncSignalControl(): Promise<void> {
+    try {
+      if (!this.topologiesRegistered) {
+        const topologies = this.engine.signalTopologies();
+        const results = await Promise.all(topologies.map((topology) => fetch('/v1/signals/topologies', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(topology),
+        })));
+        if (results.length > 0 && results.every((response) => response.ok)) {
+          this.topologiesRegistered = true;
+        } else {
+          return;
+        }
+      }
+      const response = await fetch('/v1/signals/commands/pending');
+      if (!response.ok) return;
+      const { commands } = await response.json() as { commands: Array<{ signal_id?: string; action?: string }> };
+      for (const command of commands ?? []) {
+        if (!command.signal_id || !command.action) continue;
+        this.engine.applySignalAction(command.signal_id, command.action);
+      }
+    } catch {
+      // The control loop is optional; movement and telemetry must not stop
+      // because the gateway is briefly unavailable.
+    }
   }
 
   private setFeedState(status: FeedState): void {
