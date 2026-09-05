@@ -121,6 +121,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Mounted applications do not receive an independent lifespan under every
     # ASGI server, so initialize the safety registry explicitly here.
     initialize_safety_detectors()
+    try:
+        from marga_routing.api import initialize as initialize_routing
+
+        from services.gateway.v2x_bridge import initialize as initialize_v2x
+
+        initialize_routing()
+        await initialize_v2x()
+    except ImportError as exc:
+        logger.warning("routing or edge V2X integration unavailable: %s", exc)
     signal_task: asyncio.Task[None] | None = None
     if os.environ.get("MARGA_SIGNAL_CONTROL_ENABLED", "false").lower() == "true":
         interval_s = max(1.0, float(os.environ.get("MARGA_SIGNAL_CONTROL_INTERVAL_S", "5")))
@@ -134,6 +143,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await signal_task
         except asyncio.CancelledError:
             pass
+    try:
+        from services.gateway.v2x_bridge import shutdown as shutdown_v2x
+
+        await shutdown_v2x()
+    except ImportError:
+        pass
 
     # -- Shutdown --
     try:
@@ -215,6 +230,15 @@ _try_mount_router("services.messaging.marga_messaging.api", "router", "", "messa
 _try_mount_router("services.alerts.marga_alerts.api", "router", "", "alerts")
 _try_mount_router("services.mobility_graph.api", "router", "", "mobility-graph")
 _try_mount_router("services.gateway.signal_control", "router", "", "signal-control")
+_try_mount_router("services.gateway.v2x_bridge", "router", "", "edge-v2x")
+
+try:
+    from marga_routing.api import app as routing_app
+
+    app.include_router(routing_app.router, tags=["routing"])
+    logger.info("Mounted cooperative routing routes")
+except ImportError as exc:
+    logger.warning("Routing service unavailable: %s", exc)
 
 # Hrishi's safety service is a FastAPI application (rather than an APIRouter),
 # so mount it at an explicit namespace.  This leaves existing public gateway

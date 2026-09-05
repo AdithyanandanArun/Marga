@@ -135,7 +135,12 @@ def _refresh_risks() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     return upserts, deletes
 
 
-async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
+async def ingest_vehicle_state(
+    state: VehicleState,
+    *,
+    refresh_risks: bool = True,
+    notify_subscribers: bool = True,
+) -> dict[str, Any]:
     prior_data = _entities.get(("vehicle", state.actor_id))
     prior = VehicleState.model_validate(prior_data) if prior_data else None
     # A simulator (or a single OBU) emits sequential observations of the same
@@ -149,10 +154,24 @@ async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
         else _position_fusion.fuse_with_previous(prior, state)
     )
     upserts = [_store_model("vehicle", fused.actor_id, fused)]
-    mobility_graph.observe_vehicle(fused)
-    risk_upserts, risk_deletes = _refresh_risks()
+    edge_states = mobility_graph.observe_vehicle(fused)
+    try:
+        from marga_routing.api import ingest_edge_state
+
+        for edge_state in edge_states:
+            ingest_edge_state(edge_state)
+    except ImportError:
+        pass
+    try:
+        from services.gateway.v2x_bridge import observe_actor
+
+        await observe_actor(fused)
+    except ImportError:
+        pass
+    risk_upserts, risk_deletes = _refresh_risks() if refresh_risks else ([], [])
     upserts.extend(risk_upserts)
-    _notify(_world_delta("delta", upserts, risk_deletes))
+    if notify_subscribers:
+        _notify(_world_delta("delta", upserts, risk_deletes))
     state_dict = upserts[0]["data"]
     try:
         from packages.event_bus.bus import get_event_bus
@@ -278,16 +297,32 @@ async def policy_feedback(feedback: PolicyFeedbackRequest) -> dict[str, object]:
 async def ingest_legacy(req: IngestRequest) -> dict[str, int]:
     """Compatibility bridge for adapter envelopes; new callers use /v1/ingest."""
     updated = errors = 0
+    vehicle_upserts: list[dict[str, Any]] = []
+    pedestrian_upserts: list[dict[str, Any]] = []
     for event in req.events:
         try:
             if is_pedestrian_adapter_event(event):
-                await ingest_pedestrian_state(pedestrian_from_adapter_event(event))
+                pedestrian = pedestrian_from_adapter_event(event)
+                pedestrian_upserts.append(_store_model("pedestrian", pedestrian.actor_id, pedestrian))
+                mobility_graph.observe_pedestrian(pedestrian)
             else:
-                await ingest_vehicle_state(vehicle_from_adapter_event(event))
+                result = await ingest_vehicle_state(
+                    vehicle_from_adapter_event(event),
+                    refresh_risks=False,
+                    notify_subscribers=False,
+                )
+                vehicle_upserts.append(result["entity"])
             updated += 1
         except Exception as exc:
             logger.debug("skipping invalid adapter event: %s", exc)
             errors += 1
+    # A frame is a coherent observation of the road, not 24 independent
+    # worlds. Recompute collision risk and send one delta after all its actors
+    # have been applied; this removes the per-actor O(n²) recomputation and
+    # WebSocket flood that made the Control Center appear seconds behind.
+    if vehicle_upserts or pedestrian_upserts:
+        risk_upserts, risk_deletes = _refresh_risks() if vehicle_upserts else ([], [])
+        _notify(_world_delta("delta", [*vehicle_upserts, *pedestrian_upserts, *risk_upserts], risk_deletes))
     return {"updated": updated, "errors": errors, "total_actors": len(_vehicle_states())}
 
 
@@ -304,6 +339,19 @@ async def ingest_pedestrian(state: PedestrianState) -> dict[str, Any]:
 @router.post("/v1/ingest/signal-state", status_code=202)
 async def ingest_signal(state: TrafficSignalState) -> dict[str, Any]:
     return await ingest_signal_state(state)
+
+
+@router.post("/v1/ingest/signal-states", status_code=202)
+async def ingest_signals(states: list[TrafficSignalState]) -> dict[str, int]:
+    """Apply one simulator signal frame and notify clients once."""
+    upserts: list[dict[str, Any]] = []
+    for state in states:
+        upserts.append(_store_model("signal", state.signal_id, state))
+        mobility_graph.observe_signal(state)
+        signal_controller.observe_signal(state)
+    if upserts:
+        _notify(_world_delta("delta", upserts))
+    return {"updated": len(upserts)}
 
 
 @router.post("/v1/ingest/hazard-observation", status_code=202)
@@ -424,6 +472,20 @@ _signal_overrides: dict[str, dict[str, Any]] = {}
 class ActorCommandRequest(BaseModel):
     action: Literal["set_speed", "stop", "resume"]
     speed_mps: float | None = None
+
+
+@router.delete("/v1/world-state/actors/{actor_id}", status_code=202)
+async def retire_actor(actor_id: str) -> dict[str, str]:
+    """Retire an actor when its producing adapter confirms it left the world.
+
+    This is deliberately a deletion delta rather than a zero-speed update: a
+    cleared incident must not leave a phantom vehicle on the Control Center.
+    """
+    actor = _entities.pop(("vehicle", actor_id), None)
+    if actor is None:
+        raise HTTPException(status_code=404, detail=f"Actor {actor_id!r} not in world state")
+    _notify(_world_delta("delta", [], [{"entity_type": "vehicle", "entity_id": actor_id}]))
+    return {"actor_id": actor_id, "status": "retired"}
 
 
 @router.post("/v1/world-state/actors/{actor_id}/command")

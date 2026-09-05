@@ -1,7 +1,7 @@
 import type { TrafficSignalState, VehicleState } from '../types/canonical';
 import { localPoint, type Point } from './geometry';
 import { buildJunction, type JunctionDefinition, type JunctionType } from './junctionDefs';
-import { JunctionSimEngine } from './vehicleEngine';
+import { JunctionSimEngine, type SimulationIncident } from './vehicleEngine';
 
 /** A small connected road district. Each branch joins the central cross at
  * its road endpoints, so this is one navigable visual network, not a grid of
@@ -54,7 +54,7 @@ export class JunctionNetworkEngine {
     this.rebuild(vehicleCount);
   }
 
-  tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[] } {
+  tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[]; incidents: SimulationIncident[]; despawnedActorIds: string[] } {
     const frames = this.engines.map((engine) => engine.tick(dtMs));
     for (const [sourceIndex, frame] of frames.entries()) {
       for (const exiting of frame.exits) {
@@ -69,12 +69,14 @@ export class JunctionNetworkEngine {
         this.engines[sourceIndex].respawn(exiting);
       }
     }
-    return frames.reduce<{ vehicles: VehicleState[]; signals: TrafficSignalState[] }>(
+    return frames.reduce<{ vehicles: VehicleState[]; signals: TrafficSignalState[]; incidents: SimulationIncident[]; despawnedActorIds: string[] }>(
       (frame, next) => {
         frame.vehicles.push(...next.vehicles);
         frame.signals.push(...next.signals);
+        frame.incidents.push(...next.incidents);
+        frame.despawnedActorIds.push(...next.despawnedActorIds);
         return frame;
-      }, { vehicles: [], signals: [] },
+      }, { vehicles: [], signals: [], incidents: [], despawnedActorIds: [] },
     );
   }
 
