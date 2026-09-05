@@ -16,8 +16,13 @@ interface StreamConfig {
 export class WorldStream {
   private worldWs: WebSocket | null = null;
   private alertWs: WebSocket | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private currentDelay: number;
+  // Per-channel timers and backoff. A single shared pair let the alert socket
+  // overwrite the world socket's pending handle — so `disconnect` could only
+  // ever cancel one of them — and let one channel's inflated backoff delay the
+  // other's first reconnect, which is why the world feed sometimes took tens
+  // of seconds to appear.
+  private reconnectTimers: Record<'world' | 'alert', ReturnType<typeof setTimeout> | null> = { world: null, alert: null };
+  private currentDelay: Record<'world' | 'alert', number>;
   private config: Required<StreamConfig>;
   private disposed = false;
 
@@ -32,7 +37,7 @@ export class WorldStream {
       maxReconnectDelay: config.maxReconnectDelay ?? 30000,
       onConnectionChange: config.onConnectionChange ?? (() => {}),
     };
-    this.currentDelay = this.config.reconnectDelay;
+    this.currentDelay = { world: this.config.reconnectDelay, alert: this.config.reconnectDelay };
   }
 
   connect(): void {
@@ -54,7 +59,8 @@ export class WorldStream {
     }
 
     this.worldWs.onopen = () => {
-      this.currentDelay = this.config.reconnectDelay;
+      this.currentDelay.world = this.config.reconnectDelay;
+      if (this.disposed) return;
       this.config.onConnectionChange(true);
     };
 
@@ -74,6 +80,11 @@ export class WorldStream {
     };
 
     this.worldWs.onclose = () => {
+      // A disposed stream is not allowed to report. Closing a socket that is
+      // still CONNECTING fires `onclose` asynchronously, so a stream torn down
+      // on remount would otherwise flip the badge to "reconnecting" after its
+      // replacement had already connected, and leave it stuck there.
+      if (this.disposed) return;
       this.config.onConnectionChange(false);
       this.scheduleReconnect('world');
     };
@@ -104,6 +115,8 @@ export class WorldStream {
       }
     };
 
+    this.alertWs.onopen = () => { this.currentDelay.alert = this.config.reconnectDelay; };
+
     this.alertWs.onclose = () => {
       this.scheduleReconnect('alert');
     };
@@ -122,16 +135,24 @@ export class WorldStream {
 
   private scheduleReconnect(which: 'world' | 'alert'): void {
     if (this.disposed) return;
-    this.reconnectTimer = setTimeout(() => {
+    // Never stack attempts for the same channel; a flapping socket would
+    // otherwise queue one timer per close and reconnect in a storm.
+    if (this.reconnectTimers[which]) return;
+    this.reconnectTimers[which] = setTimeout(() => {
+      this.reconnectTimers[which] = null;
       if (which === 'world') this.connectWorld();
       else this.connectAlerts();
-    }, this.currentDelay);
-    this.currentDelay = Math.min(this.currentDelay * 1.5, this.config.maxReconnectDelay);
+    }, this.currentDelay[which]);
+    this.currentDelay[which] = Math.min(this.currentDelay[which] * 1.5, this.config.maxReconnectDelay);
   }
 
   disconnect(): void {
     this.disposed = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    for (const which of ['world', 'alert'] as const) {
+      const timer = this.reconnectTimers[which];
+      if (timer) clearTimeout(timer);
+      this.reconnectTimers[which] = null;
+    }
     this.worldWs?.close();
     this.alertWs?.close();
     this.worldWs = null;
