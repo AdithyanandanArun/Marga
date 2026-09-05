@@ -3,6 +3,7 @@ import { Dashboard } from './components/Dashboard';
 import { DriverConsole } from './driver/DriverConsole';
 import { ScenarioStudio } from './scenario/ScenarioStudio';
 import { ReplayView } from './replay/ReplayView';
+import { SimulationStudio } from './simulation/SimulationStudio';
 
 export default function App() {
   return (
@@ -11,6 +12,7 @@ export default function App() {
       <Route path="/driver" element={<DriverConsole />} />
       <Route path="/scenarios" element={<ScenarioStudio />} />
       <Route path="/replay/:incidentId?" element={<ReplayView />} />
+      <Route path="/simulation" element={<SimulationStudio />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

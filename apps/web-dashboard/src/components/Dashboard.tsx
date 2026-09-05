@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, Crosshair, Layers, Radio, Search, Settings, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Activity, AlertTriangle, Crosshair, Layers, Radio, Search, Settings, ShieldCheck, TrainTrack, Wifi, WifiOff } from 'lucide-react';
 import { MapView } from '../map/MapView';
 import { AlertPanel } from './AlertPanel';
 import { Inspector } from './Inspector';
@@ -52,6 +53,7 @@ export function Dashboard() {
       <div style={s.headerStatus} aria-live="polite">
         <Pill icon={gatewayConnected ? <Activity size={14} /> : <WifiOff size={14} />} label={gatewayConnected ? 'Gateway live' : 'Gateway reconnecting'} tone={gatewayConnected ? 'good' : 'muted'} />
         <Pill icon={directV2x ? <Radio size={14} /> : <WifiOff size={14} />} label={directV2x ? 'Direct V2X ready' : 'Direct V2X unavailable'} tone={directV2x ? 'good' : 'warning'} />
+        <Link to="/simulation" style={{ ...s.advancedButton, textDecoration: 'none' }}><TrainTrack size={15} /> Junction Simulator</Link>
         <button onClick={() => setAdvancedOpen((value) => !value)} style={s.advancedButton} aria-expanded={advancedOpen}><Settings size={15} /> Advanced</button>
       </div>
     </header>
