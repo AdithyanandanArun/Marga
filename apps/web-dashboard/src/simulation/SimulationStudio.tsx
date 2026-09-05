@@ -55,7 +55,7 @@ export function SimulationStudio() {
   const resetNetwork = useCallback(() => {
     engineRef.current?.reset(vehicleCount);
     const network = networkRef.current;
-    if (network) mapRef.current?.flyTo({ center: network.center, zoom: 15.35, duration: 650, essential: true });
+    if (network) mapRef.current?.flyTo({ center: network.center, zoom: 17.5, duration: 650, essential: true });
   }, [vehicleCount]);
 
   useEffect(() => {
@@ -69,7 +69,7 @@ export function SimulationStudio() {
       container: mapContainer.current,
       style: SIM_STYLE,
       center: network.center,
-      zoom: 15.35,
+      zoom: 17.5,
       antialias: true,
     });
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
@@ -78,7 +78,7 @@ export function SimulationStudio() {
     const deck = new Deck({
       parent: mapContainer.current,
       style: { position: 'absolute', top: '0', left: '0', zIndex: '1', pointerEvents: 'none' },
-      viewState: { latitude: network.center[1], longitude: network.center[0], zoom: 15.35, bearing: 0, pitch: 0 },
+      viewState: { latitude: network.center[1], longitude: network.center[0], zoom: 17.5, bearing: 0, pitch: 0 },
       controller: false,
       layers: [],
     });

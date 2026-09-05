@@ -48,17 +48,43 @@ export const useWorldStore = create<WorldState>((set, get) => ({
   lastUpdate: null,
 
   applyDelta: (delta) => {
-    const state = get();
-    if (delta.kind === 'snapshot') {
-      state.clear();
-    }
-    for (const entity of delta.upserts) {
-      state.upsertEntity(entity);
-    }
-    for (const del of delta.deletes) {
-      state.deleteEntity(del);
-    }
-    set({ lastUpdate: delta.server_time });
+    set((state) => {
+      const vehicles = delta.kind === 'snapshot' ? new Map<string, VehicleState>() : new Map(state.vehicles);
+      const pedestrians = delta.kind === 'snapshot' ? new Map<string, PedestrianState>() : new Map(state.pedestrians);
+      const hazards = delta.kind === 'snapshot' ? new Map<string, Hazard>() : new Map(state.hazards);
+      const signals = delta.kind === 'snapshot' ? new Map<string, TrafficSignalState>() : new Map(state.signals);
+      const roadEvents = delta.kind === 'snapshot' ? new Map<string, RoadEvent>() : new Map(state.roadEvents);
+      const dynamicActors = delta.kind === 'snapshot' ? new Map<string, DynamicActorObservation>() : new Map(state.dynamicActors);
+      const rsus = delta.kind === 'snapshot' ? new Map<string, RSUState>() : new Map(state.rsus);
+      const risks = delta.kind === 'snapshot' ? new Map<string, RiskEvent>() : new Map(state.risks);
+
+      for (const entity of delta.upserts) {
+        switch (entity.entity_type) {
+          case 'vehicle': vehicles.set(entity.entity_id, entity.data as VehicleState); break;
+          case 'pedestrian': pedestrians.set(entity.entity_id, entity.data as PedestrianState); break;
+          case 'hazard': hazards.set(entity.entity_id, entity.data as Hazard); break;
+          case 'signal': signals.set(entity.entity_id, entity.data as TrafficSignalState); break;
+          case 'road_event': roadEvents.set(entity.entity_id, entity.data as RoadEvent); break;
+          case 'dynamic_actor': dynamicActors.set(entity.entity_id, entity.data as DynamicActorObservation); break;
+          case 'rsu': rsus.set(entity.entity_id, entity.data as RSUState); break;
+          case 'risk': risks.set(entity.entity_id, entity.data as RiskEvent); break;
+        }
+      }
+      for (const del of delta.deletes) {
+        switch (del.entity_type) {
+          case 'vehicle': vehicles.delete(del.entity_id); break;
+          case 'pedestrian': pedestrians.delete(del.entity_id); break;
+          case 'hazard': hazards.delete(del.entity_id); break;
+          case 'signal': signals.delete(del.entity_id); break;
+          case 'road_event': roadEvents.delete(del.entity_id); break;
+          case 'dynamic_actor': dynamicActors.delete(del.entity_id); break;
+          case 'rsu': rsus.delete(del.entity_id); break;
+          case 'risk': risks.delete(del.entity_id); break;
+        }
+      }
+
+      return { vehicles, pedestrians, hazards, signals, roadEvents, dynamicActors, rsus, risks, lastUpdate: delta.server_time };
+    });
   },
 
   upsertEntity: (entity) => {

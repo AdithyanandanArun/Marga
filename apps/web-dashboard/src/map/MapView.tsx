@@ -15,7 +15,6 @@ import { selectPrimaryRisk } from '../utils/risk';
 
 const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
-const ROAD_SCENE_STYLE: maplibregl.StyleSpecification = { version: 8, sources: {}, layers: [{ id: 'scene-background', type: 'background', paint: { 'background-color': '#10141c' } }] };
 
 interface MapViewProps {
   onEntityClick?: (entityId: string, entityType: string) => void;
@@ -80,7 +79,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: roadScene ? ROAD_SCENE_STYLE : darkMapStyle ? DARK_STYLE : LIGHT_STYLE,
+      style: darkMapStyle ? DARK_STYLE : LIGHT_STYLE,
       center: [viewport.longitude, viewport.latitude],
       zoom: viewport.zoom,
       bearing: viewport.bearing,
