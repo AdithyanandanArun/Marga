@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import Optional
 
 from .actions import ACTION_EXTENSION_S, SignalAction
 from .reward import compute_reward
@@ -62,7 +61,7 @@ class MockSumoSignalEnvironment:
     pedestrian crossings, and demand variability.
     """
 
-    STEP_S: float = 5.0          # decision interval
+    STEP_S: float = 5.0  # decision interval
     EPISODE_DURATION_S: float = 3600.0  # 1-hour episodes
 
     def __init__(self, junction_id: str = "mock-junction", seed: int = 42) -> None:
@@ -89,7 +88,7 @@ class MockSumoSignalEnvironment:
         scale = self._rng.uniform(0.7, 1.3)
         self._demand = {d: v * scale for d, v in _DEMAND_BASE.items()}
 
-    def reset(self, seed: Optional[int] = None) -> SignalObservation:
+    def reset(self, seed: int | None = None) -> SignalObservation:
         if seed is not None:
             self._rng = random.Random(seed)
         self._reset_state()
@@ -140,9 +139,7 @@ class MockSumoSignalEnvironment:
         if self._phase_elapsed >= self._phase_duration:
             self._advance_phase()
 
-        green_dirs = {
-            d for d, colour in self._phases[self._phase_index]["movements"].items() if colour == "GREEN"
-        }
+        green_dirs = {d for d, colour in self._phases[self._phase_index]["movements"].items() if colour == "GREEN"}
 
         for direction in "NSEW":
             if direction in green_dirs:
@@ -195,22 +192,34 @@ class SumoTraciSignalEnvironment:
     Falls back to MockSumoSignalEnvironment if traci is not installed.
     """
 
-    def __init__(self, junction_id: str, traci_host: str = "localhost", traci_port: int = 8813) -> None:
+    def __init__(
+        self,
+        junction_id: str,
+        traci_host: str = "localhost",
+        traci_port: int = 8813,
+        approach_lanes: dict[str, list[str]] | None = None,
+    ) -> None:
         self.junction_id = junction_id
         self._host = traci_host
         self._port = traci_port
         self.safety = SignalSafetyController()
         self._conn = None
         self._clock = 0.0
+        self._phase_started_at = 0.0
+        self._last_phase_index: int | None = None
+        self._lane_to_movement = {
+            lane_id: movement for movement, lane_ids in (approach_lanes or {}).items() for lane_id in lane_ids
+        }
 
     def connect(self) -> None:
         try:
             import traci  # type: ignore[import]
 
             self._conn = traci.connect(host=self._host, port=self._port)
+            self._reset_phase_clock()
             log.info("Connected to SUMO via TraCI at %s:%d", self._host, self._port)
-        except ImportError:
-            raise RuntimeError("traci is not installed — use MockSumoSignalEnvironment for training")
+        except ImportError as exc:
+            raise RuntimeError("traci is not installed — use MockSumoSignalEnvironment for training") from exc
 
     def disconnect(self) -> None:
         if self._conn is not None:
@@ -219,6 +228,20 @@ class SumoTraciSignalEnvironment:
             except Exception:
                 pass
             self._conn = None
+
+    def reset(self, seed: int | None = None) -> SignalObservation:
+        """Reset a dedicated SUMO training instance to a reproducible episode.
+
+        The connected SUMO process must have been launched for training; calling
+        ``load`` on an interactive/live traffic process is intentionally left to
+        the deployment operator rather than happening implicitly at runtime.
+        """
+        assert self._conn is not None, "call connect() first"
+        options = ["--seed", str(seed)] if seed is not None else []
+        self._conn.load(options)
+        self._clock = 0.0
+        self._reset_phase_clock()
+        return self._get_obs()
 
     def step(self, action: SignalAction) -> tuple[SignalObservation, float, bool]:
         assert self._conn is not None, "call connect() first"
@@ -238,7 +261,7 @@ class SumoTraciSignalEnvironment:
     def _apply_to_sumo(self, action: SignalAction, obs: SignalObservation) -> None:
         jid = self.junction_id
         if action is SignalAction.NEXT_PHASE:
-            next_idx = (obs.phase_index + 1) % 4
+            next_idx = (obs.phase_index + 1) % self._phase_count()
             self._conn.trafficlight.setPhase(jid, next_idx)
         elif action is SignalAction.EXTEND_GREEN_5:
             self._conn.trafficlight.setPhaseDuration(jid, obs.phase_remaining_s + 5.0)
@@ -251,22 +274,46 @@ class SumoTraciSignalEnvironment:
         phase_idx = self._conn.trafficlight.getPhase(jid)
         phase_str = self._conn.trafficlight.getRedYellowGreenState(jid)
         remaining = max(0.0, self._conn.trafficlight.getNextSwitch(jid) - self._conn.simulation.getTime())
-        elapsed = self._clock  # approximate; precise value requires phase start tracking
+        sim_time = self._conn.simulation.getTime()
+        if self._last_phase_index != phase_idx:
+            self._last_phase_index = phase_idx
+            self._phase_started_at = sim_time
+        elapsed = max(0.0, sim_time - self._phase_started_at)
 
         approaches: dict[str, ApproachState] = {}
-        for lane_id in self._conn.trafficlight.getControlledLanes(jid):
-            edge_id = lane_id.rsplit("_", 1)[0]
-            direction = edge_id[-1].upper() if edge_id else "X"
+        for lane_id in sorted(set(self._conn.trafficlight.getControlledLanes(jid))):
+            movement = self._lane_to_movement.get(lane_id, lane_id)
             q = self._conn.lane.getLastStepHaltingNumber(lane_id)
             speed = self._conn.lane.getLastStepMeanSpeed(lane_id)
-            if direction not in approaches:
-                approaches[direction] = ApproachState(
-                    movement_id=direction,
+            incoming_flow = self._conn.lane.getLastStepVehicleNumber(lane_id) * 60.0
+            existing = approaches.get(movement)
+            if existing is None:
+                approaches[movement] = ApproachState(
+                    movement_id=movement,
                     queue_length=q,
                     density=q / 0.5,
                     avg_speed_mps=speed,
-                    incoming_flow=self._conn.lane.getLastStepVehicleNumber(lane_id) * 12.0,
+                    incoming_flow=incoming_flow,
                     downstream_occupancy=self._conn.lane.getLastStepOccupancy(lane_id),
+                    pedestrian_demand=0,
+                    vru_density=0.0,
+                )
+            else:
+                combined_queue = existing.queue_length + q
+                approaches[movement] = ApproachState(
+                    movement_id=movement,
+                    queue_length=combined_queue,
+                    density=existing.density + q / 0.5,
+                    avg_speed_mps=(
+                        (existing.avg_speed_mps * existing.queue_length + speed * q) / combined_queue
+                        if combined_queue
+                        else 0.0
+                    ),
+                    incoming_flow=existing.incoming_flow + incoming_flow,
+                    downstream_occupancy=max(
+                        existing.downstream_occupancy,
+                        self._conn.lane.getLastStepOccupancy(lane_id),
+                    ),
                     pedestrian_demand=0,
                     vru_density=0.0,
                 )
@@ -280,3 +327,15 @@ class SumoTraciSignalEnvironment:
             approaches=approaches,
             ts=f"T+{self._clock:.1f}s",
         )
+
+    def _phase_count(self) -> int:
+        try:
+            programs = self._conn.trafficlight.getAllProgramLogics(self.junction_id)
+            return max(1, len(programs[0].phases)) if programs else 4
+        except Exception:
+            return 4
+
+    def _reset_phase_clock(self) -> None:
+        assert self._conn is not None
+        self._last_phase_index = self._conn.trafficlight.getPhase(self.junction_id)
+        self._phase_started_at = self._conn.simulation.getTime()

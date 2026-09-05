@@ -44,6 +44,7 @@ from .hazards import HazardObservation
 from .infrastructure import InfrastructureState, InfrastructureType, SignalPhase
 from .mobility_graph import GraphEdgeDefinition, MobilityEdgeState, MobilityIntersectionState, RollingEdgeMetrics
 from .road import RoadCondition, RoadEvent, RoadState
+from .signal_control import SignalApproachTopology, SignalControlDecision, SignalJunctionTopology
 
 __all__ = [
     "ActorType",
@@ -101,4 +102,8 @@ __all__ = [
     "MobilityEdgeState",
     "MobilityIntersectionState",
     "RollingEdgeMetrics",
+    # adaptive signal control
+    "SignalApproachTopology",
+    "SignalJunctionTopology",
+    "SignalControlDecision",
 ]

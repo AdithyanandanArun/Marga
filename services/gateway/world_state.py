@@ -22,6 +22,7 @@ from packages.schemas.canonical import (
     VehicleState,
 )
 from packages.schemas.hazards import HazardObservation
+from services.gateway.signal_control import signal_controller
 from services.integration.canonical_bridge import (
     is_pedestrian_adapter_event,
     pedestrian_from_adapter_event,
@@ -192,6 +193,7 @@ async def ingest_pedestrian_state(state: PedestrianState) -> dict[str, Any]:
 async def ingest_signal_state(state: TrafficSignalState) -> dict[str, Any]:
     entity = _store_model("signal", state.signal_id, state)
     mobility_graph.observe_signal(state)
+    signal_controller.observe_signal(state)
     _notify(_world_delta("delta", [entity]))
     return {"entity": entity}
 

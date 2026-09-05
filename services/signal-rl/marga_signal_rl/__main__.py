@@ -10,16 +10,26 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-from .trainer import POLICY_PATH, compare_policies, train
+from .trainer import POLICY_PATH, compare_policies, train, train_on_sumo
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train Marga signal RL policy")
     parser.add_argument("--episodes", type=int, default=300, help="training episodes (default 300)")
     parser.add_argument("--compare", action="store_true", help="run policy comparison after training")
+    parser.add_argument("--sumo-host", help="dedicated TraCI SUMO host for live-environment training")
+    parser.add_argument("--sumo-port", type=int, default=8813, help="TraCI port (default 8813)")
+    parser.add_argument("--junction-id", help="traffic-light ID when training against SUMO")
     args = parser.parse_args()
 
-    agent, result = train(args.episodes)
+    if args.sumo_host:
+        if not args.junction_id:
+            parser.error("--junction-id is required with --sumo-host")
+        agent, result = train_on_sumo(
+            args.junction_id, host=args.sumo_host, port=args.sumo_port, n_episodes=args.episodes
+        )
+    else:
+        agent, result = train(args.episodes)
     agent.save(POLICY_PATH)
     best = result.best_episode
     print(f"\nTraining complete — {args.episodes} episodes")

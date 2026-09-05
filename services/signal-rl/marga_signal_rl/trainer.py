@@ -11,12 +11,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from .actions import SignalAction
 from .agent import TabularQLearningAgent
-from .environment import MockSumoSignalEnvironment
-from .safety import SignalSafetyController
+from .environment import MockSumoSignalEnvironment, SumoTraciSignalEnvironment
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +36,7 @@ class EpisodeMetrics:
 @dataclass
 class TrainingResult:
     episodes: list[EpisodeMetrics] = field(default_factory=list)
-    best_episode: Optional[EpisodeMetrics] = None
+    best_episode: EpisodeMetrics | None = None
 
 
 def run_episode(
@@ -56,7 +54,7 @@ def run_episode(
     speed_sum = 0.0
     safety_overrides = 0
 
-    for step in range(max_steps):
+    for _step in range(max_steps):
         action = agent.select_action(obs, explore=explore)
         verdict = env.safety.validate(obs, action)
         if verdict.safety_override:
@@ -75,7 +73,7 @@ def run_episode(
         if done:
             break
 
-    n = step + 1
+    n = _step + 1
     if explore:
         agent.decay_epsilon()
 
@@ -102,7 +100,7 @@ def run_fixed_time_episode(
     queue_sum = 0.0
     speed_sum = 0.0
 
-    for step in range(max_steps):
+    for _step in range(max_steps):
         # Fixed-time: HOLD until the last 5 s of the phase, then NEXT_PHASE
         action = SignalAction.NEXT_PHASE if obs.phase_remaining_s < 5.0 else SignalAction.HOLD
         next_obs, reward, done = env.step(action)
@@ -113,7 +111,7 @@ def run_fixed_time_episode(
         if done:
             break
 
-    n = step + 1
+    n = _step + 1
     return EpisodeMetrics(
         episode=episode_num,
         policy="fixed-time",
@@ -154,6 +152,36 @@ def train(n_episodes: int = 300) -> tuple[TabularQLearningAgent, TrainingResult]
                 len(agent._q),
             )
 
+    return agent, result
+
+
+def train_on_sumo(
+    junction_id: str,
+    *,
+    host: str = "localhost",
+    port: int = 8813,
+    n_episodes: int = 300,
+    approach_lanes: dict[str, list[str]] | None = None,
+) -> tuple[TabularQLearningAgent, TrainingResult]:
+    """Train against a separately launched SUMO instance through TraCI.
+
+    This function does not start or reset a production simulator. The caller
+    must point it at a dedicated, reloadable training process.
+    """
+    env = SumoTraciSignalEnvironment(junction_id, host, port, approach_lanes)
+    env.connect()
+    agent = TabularQLearningAgent()
+    result = TrainingResult()
+    try:
+        for episode in range(n_episodes):
+            metrics = run_episode(env, agent, episode)
+            result.episodes.append(metrics)
+            if result.best_episode is None or metrics.total_reward > result.best_episode.total_reward:
+                result.best_episode = metrics
+            if episode % 50 == 0:
+                log.info("SUMO episode=%d reward=%.2f queue=%.2f", episode, metrics.total_reward, metrics.avg_queue)
+    finally:
+        env.disconnect()
     return agent, result
 
 

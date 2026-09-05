@@ -8,6 +8,8 @@ import { SystemHealth } from './SystemHealth';
 import { LayerControls } from './LayerControls';
 import { WorldStream } from '../net/worldStream';
 import { V2XStream } from '../net/v2xClient';
+import { GraphStream } from '../net/graphClient';
+import { networkTelemetry } from '../simulation/networkTelemetry';
 import { useUIStore } from '../state/uiStore';
 import { useWorldStore } from '../state/worldStore';
 import { useV2XStore, selectPc5Local } from '../state/v2xStore';
@@ -41,17 +43,25 @@ export function Dashboard() {
   const pc5Local = useV2XStore(selectPc5Local);
   const v2xStreamConnected = useV2XStore((s) => s.streamConnected);
 
-  // The Control Center is the real integration proof — SUMO -> mobility graph
-  // -> RL/routing/edge V2X -> SUMO changes -> UI — so it only ever consumes
-  // WorldStream (the gateway) and never starts the client-side junction
-  // simulator itself. That simulator is a dev/demo tool: it lives on its own
-  // page (/simulation), entered deliberately, never auto-started here.
+  // The shared browser adapter is the telemetry producer for this local demo.
+  // It publishes canonical state to the gateway; this component deliberately
+  // renders only the gateway's WorldStream, never its local simulation frame.
+  // The same singleton is used by the Junction Simulator page, so opening both
+  // pages cannot create divergent vehicle worlds.
   useEffect(() => {
     const stream = new WorldStream({ onConnectionChange: setGatewayConnected });
     stream.connect();
     const v2x = new V2XStream();
     v2x.connect();
-    return () => { stream.disconnect(); v2x.disconnect(); };
+    const graph = new GraphStream();
+    graph.connect();
+    const releaseTelemetry = networkTelemetry.retain();
+    return () => {
+      releaseTelemetry();
+      stream.disconnect();
+      v2x.disconnect();
+      graph.disconnect();
+    };
   }, []);
 
   const primaryRisk = useMemo(() => selectPrimaryRisk(risks.values()), [risks]);

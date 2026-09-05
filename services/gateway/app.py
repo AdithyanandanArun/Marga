@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -13,6 +14,24 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger("marga.gateway")
+
+
+async def _adaptive_signal_loop(interval_s: float) -> None:
+    """Optional closed loop; it only applies actions when an adapter registers."""
+    from services.gateway.signal_control import signal_controller
+
+    while True:
+        await asyncio.sleep(interval_s)
+        for junction_id in signal_controller.junction_ids:
+            try:
+                if signal_controller.executor_registered:
+                    signal_controller.decide_and_apply(junction_id)
+                else:
+                    signal_controller.recommend(junction_id)
+            except Exception as exc:
+                # Missing telemetry/topology is an observable transient state,
+                # not a reason to manufacture a control action.
+                logger.debug("adaptive signal tick skipped for %s: %s", junction_id, exc)
 
 # ---------------------------------------------------------------------------
 # Optional OpenTelemetry instrumentation — only activates when the exporter
@@ -102,7 +121,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Mounted applications do not receive an independent lifespan under every
     # ASGI server, so initialize the safety registry explicitly here.
     initialize_safety_detectors()
+    signal_task: asyncio.Task[None] | None = None
+    if os.environ.get("MARGA_SIGNAL_CONTROL_ENABLED", "false").lower() == "true":
+        interval_s = max(1.0, float(os.environ.get("MARGA_SIGNAL_CONTROL_INTERVAL_S", "5")))
+        signal_task = asyncio.create_task(_adaptive_signal_loop(interval_s))
+        logger.info("adaptive signal control loop enabled at %.1fs", interval_s)
     yield
+
+    if signal_task is not None:
+        signal_task.cancel()
+        try:
+            await signal_task
+        except asyncio.CancelledError:
+            pass
 
     # -- Shutdown --
     try:
@@ -183,6 +214,7 @@ _try_mount_router("services.trust.marga_trust.api", "router", "", "trust")
 _try_mount_router("services.messaging.marga_messaging.api", "router", "", "messaging")
 _try_mount_router("services.alerts.marga_alerts.api", "router", "", "alerts")
 _try_mount_router("services.mobility_graph.api", "router", "", "mobility-graph")
+_try_mount_router("services.gateway.signal_control", "router", "", "signal-control")
 
 # Hrishi's safety service is a FastAPI application (rather than an APIRouter),
 # so mount it at an explicit namespace.  This leaves existing public gateway
