@@ -20,12 +20,12 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import UTC, timedelta
+
+from marga_schemas.common import ActorType, GeoPoint
 
 from packages.geo.coordinates import LocalTangentPlane, angular_difference_deg, distance_m
 from packages.schemas.canonical import RiskEvent, RiskType, VehicleState
-from marga_schemas.common import ActorType, GeoPoint
 
 logger = logging.getLogger(__name__)
 

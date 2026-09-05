@@ -18,12 +18,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from packages.schemas.canonical import RiskEvent, RiskType
-from marga_schemas.common import ActorType
-
-from .risk import actor_vulnerability, is_vru
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +164,7 @@ class RiskPrioritizer:
 
     def machine_reasoning(
         self, risk: RiskEvent, factors: PrioritizationFactors
-    ) -> dict[str, float | str]:
+    ) -> dict[str, float | str | None]:
         """Generate machine reasoning trace for explainability.
 
         Stored separately from driver-facing text per the spec.

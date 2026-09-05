@@ -36,6 +36,12 @@ class V2XMessage(SchemaVersioned):
     audience_bbox: list[float] | None = None  # [minLon, minLat, maxLon, maxLat]
     audience_segment_ids: list[str] | None = None
     requires_ack: bool = False
+    # Added for the direct-PC5 data plane.  Optional defaults preserve the
+    # existing broker payload contract while making safety deliveries
+    # explainable and replayable.
+    policy_version: str | None = None
+    provenance: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class LinkState(SchemaVersioned):

@@ -17,13 +17,13 @@ It provides the backing state for the FastAPI endpoints:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
-from collections.abc import Callable
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
 from typing import Any
 
-from marga_schemas.common import ConnectivityState
 from marga_schemas.messaging import V2XMessage
+
 from packages.schemas.canonical import RiskEvent, VehicleState
 
 from .node import EdgeV2XNode
@@ -53,8 +53,8 @@ class EdgeV2XManager:
         self._lock = asyncio.Lock()
 
         # Event listeners for WebSocket streaming
-        self._message_listeners: list[Callable[[V2XMessage], None]] = []
-        self._risk_listeners: list[Callable[[RiskEvent, str], None]] = []
+        self._message_listeners: list[Callable[[V2XMessage], Awaitable[None] | None]] = []
+        self._risk_listeners: list[Callable[[RiskEvent, str], Awaitable[None] | None]] = []
 
     @property
     def internet_available(self) -> bool:
@@ -64,16 +64,18 @@ class EdgeV2XManager:
     def node_ids(self) -> list[str]:
         return list(self._nodes.keys())
 
-    def on_message(self, listener: Callable[[V2XMessage], None]) -> None:
+    def on_message(self, listener: Callable[[V2XMessage], Awaitable[None] | None]) -> None:
         """Register a listener for V2X message events (for WebSocket streaming)."""
-        self._message_listeners.append(listener)
+        if listener not in self._message_listeners:
+            self._message_listeners.append(listener)
 
-    def on_risk(self, listener: Callable[[RiskEvent, str], None]) -> None:
+    def on_risk(self, listener: Callable[[RiskEvent, str], Awaitable[None] | None]) -> None:
         """Register a listener for risk creation events (for WebSocket streaming).
 
         The listener receives (risk_event, node_id).
         """
-        self._risk_listeners.append(listener)
+        if listener not in self._risk_listeners:
+            self._risk_listeners.append(listener)
 
     async def create_node(
         self,
@@ -94,11 +96,13 @@ class EdgeV2XManager:
             risk_evaluator=evaluator,
             prioritizer=prioritizer,
         )
+        node.on_message(self._emit_message)
+        node.on_risk(self._emit_risk)
         await node.start()
 
         async with self._lock:
             # Connect the new node's transport to all existing nodes.
-            for existing_id, existing_node in self._nodes.items():
+            for existing_node in self._nodes.values():
                 node.transport.register_peer(existing_node.transport)
                 existing_node.transport.register_peer(node.transport)
 
@@ -134,13 +138,12 @@ class EdgeV2XManager:
     async def update_actor_state(self, state: VehicleState) -> RiskEvent | None:
         """Update an actor's state and trigger risk evaluation.
 
-        This is the main entry point for the simulation loop.  When a
-        vehicle's state changes, this method:
-        1. Updates the node's state
-        2. Pushes the state to all peer nodes (so they know about this actor)
-        3. Re-evaluates local risks (including newly learned peer states)
-        4. If a new risk is detected, broadcasts it via PC5
-        5. Notifies risk listeners (for WebSocket streaming)
+        This is the main entry point for the simulation loop.  State only
+        reaches peers through in-range PC5 delivery; the manager never copies
+        it directly into a remote node.  When a newly positioned node finds an
+        in-range peer, that peer immediately republishes its latest state so
+        both nodes can form a local safety view without waiting for a second
+        simulator tick.
 
         Returns the active risk event if one was detected, else None.
         """
@@ -149,29 +152,50 @@ class EdgeV2XManager:
             logger.warning("Unknown actor %s, creating node", state.actor_id)
             node = await self.create_node(state.actor_id)
 
-        # Push this state to all peer nodes so they can evaluate risks.
+        activation = node.update_state(state)
+
+        # The moved node can also leave another node's PC5 range. Prune those
+        # remote local views immediately; stale state must not keep a risk
+        # active until the other actor happens to publish again.
         for peer_node in self._nodes.values():
             if peer_node.actor_id != state.actor_id:
-                peer_node.update_peer_state(state)
+                peer_node.refresh_direct_peers()
 
-        old_risk_id = node.active_risk.risk_id if node.active_risk else None
-        node.update_state(state)
+        # PC5 neighbour-discovery handshake.  Only peers whose transport has
+        # measured the new node in range can answer with their latest state.
+        for peer_node in self._nodes.values():
+            if peer_node.actor_id != state.actor_id and state.actor_id in peer_node.get_neighbours():
+                await peer_node.broadcast_state()
 
         # Broadcast state to peers via PC5.
         await node.broadcast_state()
 
-        # If a new risk was detected, broadcast it.
-        active_risk = node.active_risk
-        if active_risk and active_risk.risk_id != old_risk_id:
-            await node.broadcast_risk(active_risk)
-            # Notify risk listeners.
-            for listener in self._risk_listeners:
-                try:
-                    listener(active_risk, state.actor_id)
-                except Exception:
-                    logger.exception("Risk listener error")
+        # A local activation from the state update is sent once. Activations
+        # caused by a received PC5 state are sent inside EdgeV2XNode's receive
+        # handler and observed through the same listener path.
+        if activation is not None:
+            await node.broadcast_risk(activation)
+            await self._emit_risk(activation, state.actor_id)
 
-        return active_risk
+        return node.active_risk
+
+    async def _emit_message(self, message: V2XMessage) -> None:
+        for listener in self._message_listeners:
+            try:
+                result = listener(message)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.exception("V2X message listener error")
+
+    async def _emit_risk(self, risk: RiskEvent, node_id: str) -> None:
+        for listener in self._risk_listeners:
+            try:
+                result = listener(risk, node_id)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.exception("Risk listener error")
 
     def set_internet(self, available: bool) -> None:
         """Toggle internet availability for all nodes.

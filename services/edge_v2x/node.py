@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from marga_schemas.common import ActorType, ConnectivityState, GeoPoint
+from marga_schemas.common import ConnectivityState, GeoPoint
 from marga_schemas.messaging import MessagePriority, V2XMessage
+
 from packages.schemas.canonical import RiskEvent, VehicleState
 
 from .prioritizer import PrioritizationFactors, RiskPrioritizer
@@ -63,6 +65,9 @@ class EdgeV2XNode:
         self._internet_available: bool = True
         self._received_messages: list[V2XMessage] = []
         self._subscription_id: str | None = None
+        self._active_signature: tuple[str, tuple[str, ...]] | None = None
+        self._message_listeners: list[Callable[[V2XMessage], Awaitable[None] | None]] = []
+        self._risk_listeners: list[Callable[[RiskEvent, str], Awaitable[None] | None]] = []
 
     @property
     def transport(self) -> SimulatedPC5Transport:
@@ -97,6 +102,14 @@ class EdgeV2XNode:
             self._transport.set_connectivity(ConnectivityState.DIRECT_ONLY)
         logger.info("Node %s internet=%s", self.actor_id, available)
 
+    def on_message(self, listener: Callable[[V2XMessage], Awaitable[None] | None]) -> None:
+        """Observe a message that this node successfully delivered over PC5."""
+        self._message_listeners.append(listener)
+
+    def on_risk(self, listener: Callable[[RiskEvent, str], Awaitable[None] | None]) -> None:
+        """Observe one newly activated local risk, not every reevaluation."""
+        self._risk_listeners.append(listener)
+
     async def start(self) -> None:
         """Initialise the node: register receive handler."""
         self._subscription_id = await self._transport.receive(self._on_message)
@@ -109,7 +122,7 @@ class EdgeV2XNode:
         await self._transport.close()
         logger.info("Edge V2X node %s stopped", self.actor_id)
 
-    def update_state(self, state: VehicleState) -> None:
+    def update_state(self, state: VehicleState) -> RiskEvent | None:
         """Update this node's actor state and re-evaluate risks.
 
         After updating state, the node:
@@ -121,31 +134,23 @@ class EdgeV2XNode:
         self._state = state
         self._transport.update_position(state.position.lat, state.position.lon)
 
-        # Evaluate risks against known peers.
-        peer_states = list(self._peers.values())
-        risks = self._risk_evaluator.evaluate_all(state, peer_states)
+        # A direct peer state is valid only while that peer remains in PC5
+        # range.  This prevents stale/out-of-range observations influencing a
+        # local safety decision.
+        return self.refresh_direct_peers()
 
-        # Prioritise one active risk.
-        new_active, factors = self._prioritizer.prioritize_with_factors(risks)
+    def refresh_direct_peers(self) -> RiskEvent | None:
+        """Discard out-of-range peer observations and refresh local risk state."""
+        in_range = set(self._transport.nearby_nodes())
+        self._peers = {peer_id: peer for peer_id, peer in self._peers.items() if peer_id in in_range}
+        return self._evaluate_risks()
 
-        # Check if the active risk changed.
-        old_id = self._active_risk.risk_id if self._active_risk else None
-        new_id = new_active.risk_id if new_active else None
-
-        self._active_risk = new_active
-        self._active_factors = factors
-
-        if new_active and new_id != old_id:
-            logger.info(
-                "Node %s new active risk: %s (score=%.3f)",
-                self.actor_id,
-                new_active.type.value,
-                factors.composite_score if factors else 0,
-            )
-
-    def update_peer_state(self, peer_state: VehicleState) -> None:
+    def update_peer_state(self, peer_state: VehicleState) -> RiskEvent | None:
         """Update a peer's state.  Called when a peer message is received."""
+        if peer_state.actor_id not in self._transport.nearby_nodes():
+            return None
         self._peers[peer_state.actor_id] = peer_state
+        return self._evaluate_risks()
 
     def remove_peer(self, peer_id: str) -> None:
         """Remove a peer that has gone out of range or disconnected."""
@@ -184,7 +189,7 @@ class EdgeV2XNode:
                 "link_quality": round(quality, 4),
                 "has_state": peer_state is not None,
                 "actor_type": peer_state.actor_type.value if peer_state else None,
-                "distance_m": None,  # Could be computed if needed
+                "distance_m": self._transport.peer_distance_m(peer_id),
             })
         return neighbours
 
@@ -216,9 +221,14 @@ class EdgeV2XNode:
                 "policy_version": risk.policy_version,
             },
             audience_segment_ids=[self._state.road_segment_id] if self._state.road_segment_id else None,
+            policy_version=risk.policy_version,
+            provenance=["edge-v2x-node", "simulated-pc5"],
+            evidence=risk.evidence,
         )
-
-        return await self._transport.send(message, internet_available=self._internet_available)
+        delivered = await self._transport.send(message, internet_available=self._internet_available)
+        if delivered:
+            await self._emit_message(message)
+        return delivered
 
     async def broadcast_state(self) -> bool:
         """Broadcast this node's actor state to nearby peers.
@@ -240,11 +250,22 @@ class EdgeV2XNode:
             timestamp=datetime.now(UTC),
             ttl_s=5,
             payload=self._state.model_dump(mode="json"),
+            policy_version="edge-state-v1",
+            provenance=["edge-v2x-node", "simulated-pc5"],
+            evidence=[
+                {
+                    "type": "actor_state",
+                    "position_uncertainty_m": self._state.position_uncertainty_m,
+                    "source": self._state.source.value,
+                }
+            ],
         )
+        delivered = await self._transport.send(message, internet_available=self._internet_available)
+        if delivered:
+            await self._emit_message(message)
+        return delivered
 
-        return await self._transport.send(message, internet_available=self._internet_available)
-
-    def _on_message(self, message: V2XMessage) -> None:
+    async def _on_message(self, message: V2XMessage) -> None:
         """Handle an incoming V2X message from a peer."""
         self._received_messages.append(message)
 
@@ -253,7 +274,10 @@ class EdgeV2XNode:
             try:
                 payload = message.payload
                 peer_state = VehicleState(**payload)
-                self.update_peer_state(peer_state)
+                activated = self.update_peer_state(peer_state)
+                if activated is not None:
+                    await self.broadcast_risk(activated)
+                    await self._emit_risk(activated)
             except Exception:
                 logger.debug("Failed to parse peer state from message %s", message.message_id)
 
@@ -265,6 +289,41 @@ class EdgeV2XNode:
                 message.sender_id,
                 message.payload.get("risk_type"),
             )
+
+    def _evaluate_risks(self) -> RiskEvent | None:
+        """Refresh the local risk view and return only a new active conflict."""
+        if self._state is None:
+            return None
+        risks = self._risk_evaluator.evaluate_all(self._state, list(self._peers.values()))
+        active, factors = self._prioritizer.prioritize_with_factors(risks)
+        signature = (
+            (active.type.value, tuple(sorted(active.affected_actor_ids)))
+            if active is not None else None
+        )
+        activated = active if active is not None and signature != self._active_signature else None
+        self._active_risk = active
+        self._active_factors = factors
+        self._active_signature = signature
+        if activated is not None:
+            logger.info(
+                "Node %s new active risk: %s (score=%.3f)",
+                self.actor_id,
+                activated.type.value,
+                factors.composite_score if factors else 0,
+            )
+        return activated
+
+    async def _emit_message(self, message: V2XMessage) -> None:
+        for listener in self._message_listeners:
+            result = listener(message)
+            if result is not None:
+                await result
+
+    async def _emit_risk(self, risk: RiskEvent) -> None:
+        for listener in self._risk_listeners:
+            result = listener(risk, self.actor_id)
+            if result is not None:
+                await result
 
     @property
     def stats(self) -> dict[str, Any]:

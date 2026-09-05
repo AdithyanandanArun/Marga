@@ -12,22 +12,19 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-
-from packages.schemas.canonical import Position, RiskEvent, RiskType, VehicleState
 from marga_schemas.common import ActorType, ConnectivityState, Source
 
+from packages.schemas.canonical import Position, RiskEvent, RiskType, VehicleState
 from services.edge_v2x.api import app, set_manager
 from services.edge_v2x.manager import EdgeV2XManager
 from services.edge_v2x.node import EdgeV2XNode
 from services.edge_v2x.prioritizer import RiskPrioritizer
 from services.edge_v2x.risk import EdgeRiskEvaluator, actor_vulnerability, is_vru
 from services.edge_v2x.transport import SimulatedPC5Transport
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -573,7 +570,79 @@ class TestEdgeV2XManager:
         await manager.update_actor_state(s2)
         neighbours = manager.get_neighbours("veh-1")
         assert neighbours is not None
-        assert any(n["node_id"] == "veh-2" for n in neighbours)
+        neighbour = next(n for n in neighbours if n["node_id"] == "veh-2")
+        assert neighbour["distance_m"] is not None
+        assert neighbour["distance_m"] < 300.0
+        assert 0 < neighbour["link_quality"] <= 1.0
+        await manager.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_out_of_range_state_is_not_copied_into_peer_knowledge(self, manager: EdgeV2XManager) -> None:
+        """The manager must not bypass PC5 range with a shared-memory copy."""
+        await manager.create_node("veh-near")
+        await manager.create_node("veh-far")
+        near = _make_vehicle("veh-near", lat=12.9716, lon=77.5946)
+        far = _make_vehicle("veh-far", lat=12.9850, lon=77.5946)
+
+        await manager.update_actor_state(near)
+        await manager.update_actor_state(far)
+
+        near_node = manager.get_node("veh-near")
+        far_node = manager.get_node("veh-far")
+        assert near_node is not None and far_node is not None
+        assert "veh-far" not in near_node._peers
+        assert "veh-near" not in far_node._peers
+        assert manager.get_neighbours("veh-near") == []
+        await manager.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_moving_out_of_pc5_range_clears_stale_peer_risk(self, manager: EdgeV2XManager) -> None:
+        await manager.create_node("veh-1")
+        await manager.create_node("veh-2")
+        await manager.update_actor_state(
+            _make_vehicle("veh-1", lat=12.9716, lon=77.5946, heading=0, speed=15)
+        )
+        await manager.update_actor_state(
+            _make_vehicle("veh-2", lat=12.9720, lon=77.5946, heading=180, speed=15)
+        )
+        assert manager.get_all_risks()
+
+        await manager.update_actor_state(
+            _make_vehicle("veh-2", lat=12.9850, lon=77.5946, heading=180, speed=15)
+        )
+        assert manager.get_all_risks() == []
+        await manager.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_pc5_message_and_risk_listeners_emit_only_real_direct_events(
+        self, manager: EdgeV2XManager
+    ) -> None:
+        messages = []
+        risks = []
+
+        async def record_message(message):
+            messages.append(message)
+
+        async def record_risk(risk, node_id):
+            risks.append((node_id, risk))
+
+        manager.on_message(record_message)
+        manager.on_risk(record_risk)
+        await manager.create_node("veh-1")
+        await manager.create_node("veh-2")
+        s1 = _make_vehicle("veh-1", lat=12.9716, lon=77.5946, heading=0, speed=15)
+        s2 = _make_vehicle("veh-2", lat=12.9720, lon=77.5946, heading=180, speed=15)
+
+        await manager.update_actor_state(s1)
+        await manager.update_actor_state(s2)
+        emitted_after_activation = len(risks)
+        await manager.update_actor_state(s2)
+
+        assert any(message.topic == "actor.state.updated" for message in messages)
+        assert any(message.topic == "risk.detected" for message in messages)
+        assert risks
+        assert all(risk.policy_version == "edge-v2x-v1" for _, risk in risks)
+        assert len(risks) == emitted_after_activation
         await manager.shutdown()
 
     @pytest.mark.asyncio
@@ -683,7 +752,7 @@ class TestEdgeV2XAPI:
         await api_client.post("/nodes", json={"actor_id": "veh-1"})
         state = _make_vehicle("veh-1")
         resp = await api_client.post(
-            f"/nodes/veh-1/state",
+            "/nodes/veh-1/state",
             json={"state": state.model_dump(mode="json")},
         )
         assert resp.status_code == 200
@@ -693,7 +762,7 @@ class TestEdgeV2XAPI:
         await api_client.post("/nodes", json={"actor_id": "veh-1"})
         state = _make_vehicle("veh-2")
         resp = await api_client.post(
-            f"/nodes/veh-1/state",
+            "/nodes/veh-1/state",
             json={"state": state.model_dump(mode="json")},
         )
         assert resp.status_code == 422

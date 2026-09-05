@@ -24,13 +24,12 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
-
 from marga_schemas.messaging import V2XMessage
+from pydantic import BaseModel
+
 from packages.schemas.canonical import RiskEvent, VehicleState
 
 from .manager import EdgeV2XManager
@@ -102,6 +101,7 @@ class RiskResponse(BaseModel):
 class NeighbourInfo(BaseModel):
     node_id: str
     link_quality: float
+    distance_m: float | None = None
     has_state: bool
     actor_type: str | None = None
 
@@ -150,7 +150,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Marga Edge V2X Service",
-    description="Simulated OBU/ECU edge nodes with PC5 direct communication, local risk evaluation, and offline-first safety delivery.",
+    description=(
+        "Simulated OBU/ECU edge nodes with PC5 direct communication, "
+        "local risk evaluation, and offline-first safety delivery."
+    ),
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -213,13 +216,18 @@ class WebSocketHub:
 
 
 _hub = WebSocketHub()
+_listener_manager: EdgeV2XManager | None = None
 
 
 # Register hub as a listener on the manager when it's created.
 def _ensure_listeners() -> None:
+    global _listener_manager
     mgr = get_manager()
+    if _listener_manager is mgr:
+        return
     mgr.on_message(_hub.broadcast_message)
-    mgr.on_risk(lambda risk, nid: asyncio.create_task(_hub.broadcast_risk(risk, nid)))
+    mgr.on_risk(_hub.broadcast_risk)
+    _listener_manager = mgr
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +325,7 @@ async def get_neighbours(actor_id: str) -> list[NeighbourInfo]:
         NeighbourInfo(
             node_id=n["node_id"],
             link_quality=n["link_quality"],
+            distance_m=n.get("distance_m"),
             has_state=n["has_state"],
             actor_type=n.get("actor_type"),
         )

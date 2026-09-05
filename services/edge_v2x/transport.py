@@ -22,14 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
 from marga_schemas.common import ConnectivityState, GeoPoint
 from marga_schemas.messaging import LinkState, V2XMessage
+
 from packages.geo.coordinates import distance_m
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class EdgeV2XTransport(Protocol):
         """
         ...
 
-    async def receive(self, handler: Callable[[V2XMessage], None]) -> str:
+    async def receive(self, handler: Callable[[V2XMessage], Awaitable[None] | None]) -> str:
         """Register a handler for incoming V2X messages.
 
         Returns a subscription ID that can be used with ``stop_receive``.
@@ -85,6 +85,10 @@ class EdgeV2XTransport(Protocol):
 
         Quality decreases with distance.  Returns 0 for out-of-range peers.
         """
+        ...
+
+    def peer_distance_m(self, peer_id: str) -> float | None:
+        """Return current direct distance to a peer, if both positions are known."""
         ...
 
     def transport_state(self) -> LinkState:
@@ -132,7 +136,7 @@ class SimulatedPC5Transport:
     ) -> None:
         self._node_id = node_id
         self._pc5_range_m = pc5_range_m
-        self._handlers: dict[str, Callable[[V2XMessage], None]] = {}
+        self._handlers: dict[str, Callable[[V2XMessage], Awaitable[None] | None]] = {}
         self._lock = asyncio.Lock()
         self._closed = False
         self._send_count = 0
@@ -228,7 +232,7 @@ class SimulatedPC5Transport:
 
         return delivered
 
-    async def receive(self, handler: Callable[[V2XMessage], None]) -> str:
+    async def receive(self, handler: Callable[[V2XMessage], Awaitable[None] | None]) -> str:
         """Register a handler for incoming V2X messages."""
         sub_id = str(uuid.uuid4())
         async with self._lock:
@@ -257,6 +261,14 @@ class SimulatedPC5Transport:
         if dist is None:
             return 0.0
         return _link_quality_from_distance(dist, self._pc5_range_m)
+
+    def peer_distance_m(self, peer_id: str) -> float | None:
+        """Return the measured peer distance when it is within PC5 range."""
+        peer = self._peers.get(peer_id)
+        if peer is None:
+            return None
+        distance = self._peer_distance(peer)
+        return distance if distance is not None and distance <= self._pc5_range_m else None
 
     def transport_state(self) -> LinkState:
         """Return the current transport connectivity state."""

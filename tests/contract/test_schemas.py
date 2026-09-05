@@ -151,6 +151,20 @@ class TestValidFixtures:
         assert v.topic == "hazard.observed"
         assert v.ttl_s == 60
 
+    def test_v2x_message_preserves_decision_evidence(self) -> None:
+        data = _v2x_message_data()
+        data.update(
+            {
+                "policy_version": "edge-v2x-v1",
+                "provenance": ["edge-v2x-node", "simulated-pc5"],
+                "evidence": [{"type": "trajectory_ttc", "confidence": 0.91}],
+            }
+        )
+        message = V2XMessage(**data)
+        assert message.policy_version == "edge-v2x-v1"
+        assert message.provenance == ["edge-v2x-node", "simulated-pc5"]
+        assert message.evidence[0]["type"] == "trajectory_ttc"
+
     def test_event_envelope(self) -> None:
         e = EventEnvelope(**_event_envelope_data())
         assert e.event_type == "hazard.observed"
