@@ -93,6 +93,16 @@ function turnRoute(a: ArmGeom, b: ArmGeom, center: Point, control: RouteControl,
   };
 }
 
+function bypassRoute(a: ArmGeom, b: ArmGeom, via: Point[], refLat: number): RouteDef {
+  const path = [a.inboundFar, ...via, b.outboundFar];
+  return {
+    id: `${a.id}-${b.id}-service-bypass`,
+    path,
+    control: 'NONE',
+    stopLineFraction: null,
+  };
+}
+
 function laneMarkingsFor(arms: ArmGeom[]): Point[][] {
   return arms.map((arm) => [arm.far, arm.near]);
 }
@@ -161,6 +171,15 @@ function buildT(lat: number, lon: number): JunctionDefinition {
     turnRoute(E, N, center, 'SIGNAL_GROUP_A', lat),
     turnRoute(W, N, center, 'SIGNAL_GROUP_A', lat),
   ];
+  // An asymmetric residential/service road sits beside the peripheral
+  // T-junction. It provides a genuine alternate E↔W movement when the main
+  // approach is queued, without turning the central junction into a ring.
+  const serviceSouthWest = localPoint(lat, lon, -52, -72);
+  const serviceSouthEast = localPoint(lat, lon, -52, 72);
+  routes.push(
+    bypassRoute(E, W, [serviceSouthEast, serviceSouthWest], lat),
+    bypassRoute(W, E, [serviceSouthWest, serviceSouthEast], lat),
+  );
 
   const box = JUNCTION_R;
   return {
@@ -171,6 +190,7 @@ function buildT(lat: number, lon: number): JunctionDefinition {
     roads: [
       [W.far, E.far],
       [N.far, center],
+      [W.far, serviceSouthWest, serviceSouthEast, E.far],
     ],
     laneMarkings: laneMarkingsFor(arms),
     areaPolygons: [{
@@ -195,8 +215,7 @@ function buildRoundabout(lat: number, lon: number): JunctionDefinition {
   const center: Point = localPoint(lat, lon, 0, 0);
   const angles = [0, 90, 180, 270];
   const armIds = ['N', 'E', 'S', 'W'];
-
-  const spokeFar = (angle: number) => projectPoint(lat, lon, angle, ARM_LEN);
+  const arms = angles.map((angle, index) => buildArm(lat, lon, armIds[index], angle, ARM_LEN, RING_R, LANE_OFFSET));
   const ringPoint = (angle: number) => projectPoint(lat, lon, angle, RING_R);
 
   const routes: RouteDef[] = [];
@@ -211,7 +230,11 @@ function buildRoundabout(lat: number, lon: number): JunctionDefinition {
       for (let s = 0; s <= steps; s++) {
         arc.push(ringPoint(entryAngle + (sweep * s) / steps));
       }
-      const path = [spokeFar(entryAngle), ringPoint(entryAngle), ...arc.slice(1), spokeFar(exitAngle)];
+      // The outer endpoints deliberately use the same lane offsets as every
+      // connected road. A vehicle leaving the cross junction therefore enters
+      // the roundabout on the exact same lane rather than teleporting to its
+      // centreline.
+      const path = [arms[i].inboundFar, ringPoint(entryAngle), ...arc.slice(1), arms[j].outboundFar];
       routes.push({ id: `${armIds[i]}-${armIds[j]}-ring`, path, control: 'NONE', stopLineFraction: null });
     }
   }
@@ -221,8 +244,8 @@ function buildRoundabout(lat: number, lon: number): JunctionDefinition {
     label: 'Roundabout',
     description: 'Free-flowing circulation, clockwise (left-hand traffic). No signal — speed is the only variable.',
     center,
-    roads: angles.map((a) => [spokeFar(a), ringPoint(a)]),
-    laneMarkings: [],
+    roads: arms.map((arm) => [arm.far, ringPoint(arm.angle)]),
+    laneMarkings: arms.map((arm) => [arm.far, ringPoint(arm.angle)]),
     areaPolygons: [
       { polygon: circle(lat, lon, RING_R + 5.5, 40), fill: SURFACE, line: JUNCTION_LINE },
       { polygon: circle(lat, lon, ISLAND_R, 28), fill: ISLAND_FILL, line: ISLAND_LINE },
@@ -276,8 +299,8 @@ function buildRailwayCrossing(lat: number, lon: number): JunctionDefinition {
     routes,
     gate: {
       position: localPoint(lat, lon, 8, 0),
-      openMs: 22000,
-      closedMs: 10000,
+      openMs: 35000,
+      closedMs: 30000,
     },
   };
 }

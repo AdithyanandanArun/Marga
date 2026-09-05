@@ -9,12 +9,17 @@ import { createRiskLayer } from './layers/risks';
 import { createInfrastructureLayer } from './layers/infrastructure';
 import { createTrajectoriesLayer } from './layers/trajectories';
 import { createV2XLinksLayer } from './layers/v2xLinks';
-import { createJunctionRoadLayers } from './layers/junctionScene';
+import { createNetworkRoadLayers, NETWORK_BOUNDS, NETWORK_CENTER } from './layers/networkScene';
 import type { VehicleState } from '../types/canonical';
 import { selectPrimaryRisk } from '../utils/risk';
 
 const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+const NETWORK_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {},
+  layers: [{ id: 'network-background', type: 'background', paint: { 'background-color': '#0d1017' } }],
+};
 
 interface MapViewProps {
   onEntityClick?: (entityId: string, entityType: string) => void;
@@ -71,7 +76,8 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
     hasAutoFramedRef.current = true;
     const latitude = actors.reduce((sum, actor) => sum + actor.position.lat, 0) / actors.length;
     const longitude = actors.reduce((sum, actor) => sum + actor.position.lon, 0) / actors.length;
-    mapRef.current.flyTo({ center: [longitude, latitude], zoom: 16, duration: 900, essential: true });
+    if (roadScene) mapRef.current.fitBounds(NETWORK_BOUNDS, { padding: 70, duration: 900, essential: true, maxZoom: 15.4 });
+    else mapRef.current.flyTo({ center: [longitude, latitude], zoom: 16, duration: 900, essential: true });
   }, [mapLoaded, vehicles, risks]);
 
   useEffect(() => {
@@ -79,9 +85,9 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: darkMapStyle ? DARK_STYLE : LIGHT_STYLE,
-      center: [viewport.longitude, viewport.latitude],
-      zoom: viewport.zoom,
+      style: roadScene ? NETWORK_STYLE : darkMapStyle ? DARK_STYLE : LIGHT_STYLE,
+      center: roadScene ? NETWORK_CENTER : [viewport.longitude, viewport.latitude],
+      zoom: roadScene ? 14.6 : viewport.zoom,
       bearing: viewport.bearing,
       pitch: viewport.pitch,
       antialias: true,
@@ -91,6 +97,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
 
     map.on('load', () => {
+      if (roadScene) map.fitBounds(NETWORK_BOUNDS, { padding: 70, duration: 0, maxZoom: 15.4 });
       setMapLoaded(true);
     });
 
@@ -166,10 +173,15 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
     if (!deckRef.current) return;
 
     const zoom = mapRef.current?.getZoom() ?? viewport.zoom;
+    // Heading comes from the route sampler. This stays continuous through a
+    // turn; deriving it from tiny scooter weave offsets makes bodies flicker
+    // left/right even though the vehicle has not changed direction.
+    const orientedVehicles = Array.from(vehicles.values());
+    const orientedVehicleMap = vehicles;
     const layers = [
-      ...(roadScene ? createJunctionRoadLayers() : []),
+      ...(roadScene ? createNetworkRoadLayers() : []),
       ...createActorLayer(
-        Array.from(vehicles.values()),
+        orientedVehicles,
         Array.from(pedestrians.values()),
         Array.from(dynamicActors.values()),
         zoom,
@@ -177,9 +189,9 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
         selectedEntityId,
       ),
       ...(showHazards ? createHazardLayer(Array.from(hazards.values()), zoom) : []),
-      ...(showRiskZones ? createRiskLayer(Array.from(risks.values()), vehicles, zoom) : []),
-      ...(showTrajectories ? [createTrajectoriesLayer(Array.from(vehicles.values()), Array.from(risks.values())[0]?.affected_actor_ids)] : []),
-      ...(showV2XLinks ? [createV2XLinksLayer(Array.from(vehicles.values()), Array.from(rsus.values()))] : []),
+      ...(showRiskZones ? createRiskLayer(Array.from(risks.values()), orientedVehicleMap, zoom) : []),
+      ...(showTrajectories ? [createTrajectoriesLayer(orientedVehicles, Array.from(risks.values())[0]?.affected_actor_ids)] : []),
+      ...(showV2XLinks ? [createV2XLinksLayer(orientedVehicles, Array.from(rsus.values()))] : []),
       ...createInfrastructureLayer(
         showSignals ? Array.from(signals.values()) : [],
         showRoadEvents ? Array.from(roadEvents.values()) : [],

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import maplibregl from 'maplibre-gl';
 import { Deck } from '@deck.gl/core';
@@ -15,7 +15,9 @@ import {
   SLEEPER_TIE_COLOR,
   type Point,
 } from './junctionDefs';
-import { buildJunctionNetwork, JunctionNetworkEngine, type JunctionNetwork } from './networkEngine';
+import { buildJunctionNetwork, type JunctionNetwork } from './networkEngine';
+import { networkTelemetry, type NetworkFrame } from './networkTelemetry';
+import { NETWORK_BOUNDS } from '../map/layers/networkScene';
 
 // The display geometry is a deterministic local network. Its state is emitted
 // through the canonical gateway ingestion contract, exactly like any simulator
@@ -29,56 +31,38 @@ const SIM_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: 'sim-bg', type: 'background', paint: { 'background-color': '#0d1017' } }],
 };
 
-const ACTOR_TYPE_FOR_ADAPTER: Record<VehicleState['actor_type'], string> = {
-  CAR: 'car', BIKE: 'motorcycle', AUTO: 'auto_rickshaw', BUS: 'bus', TRUCK: 'truck', AMBULANCE: 'emergency', OTHER: 'other',
-};
-
 export function SimulationStudio() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const deckRef = useRef<Deck | null>(null);
-  const engineRef = useRef<JunctionNetworkEngine | null>(null);
   const networkRef = useRef<JunctionNetwork | null>(null);
-  const animRef = useRef<number>(0);
-  const lastTsRef = useRef<number>(0);
-  const playingRef = useRef(true);
-  const lastPublishRef = useRef(0);
-  const publishingRef = useRef(false);
 
   const [vehicleCount, setVehicleCount] = useState(24);
   const [chaos, setChaos] = useState(0.5);
   const [playing, setPlaying] = useState(true);
   const [feedState, setFeedState] = useState<'connecting' | 'live' | 'offline'>('connecting');
 
-  useEffect(() => { playingRef.current = playing; }, [playing]);
-
-  const resetNetwork = useCallback(() => {
-    engineRef.current?.reset(vehicleCount);
-    const network = networkRef.current;
-    if (network) mapRef.current?.flyTo({ center: network.center, zoom: 17.5, duration: 650, essential: true });
-  }, [vehicleCount]);
-
   useEffect(() => {
     if (!mapContainer.current) return;
 
     const network = buildJunctionNetwork(SIM_LAT, SIM_LON);
     networkRef.current = network;
-    engineRef.current = new JunctionNetworkEngine(network, vehicleCount, chaos);
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: SIM_STYLE,
       center: network.center,
-      zoom: 17.5,
+      zoom: 14.6,
       antialias: true,
     });
+    map.on('load', () => map.fitBounds(NETWORK_BOUNDS, { padding: 70, duration: 0, maxZoom: 15.4 }));
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
     mapRef.current = map;
 
     const deck = new Deck({
       parent: mapContainer.current,
       style: { position: 'absolute', top: '0', left: '0', zIndex: '1', pointerEvents: 'none' },
-      viewState: { latitude: network.center[1], longitude: network.center[0], zoom: 17.5, bearing: 0, pitch: 0 },
+      viewState: { latitude: network.center[1], longitude: network.center[0], zoom: 14.6, bearing: 0, pitch: 0 },
       controller: false,
       layers: [],
     });
@@ -97,32 +81,15 @@ export function SimulationStudio() {
       });
     });
 
-    const loop = (ts: number) => {
-      const dt = lastTsRef.current ? Math.min(200, ts - lastTsRef.current) : 16;
-      lastTsRef.current = ts;
+    const onFrame = ({ vehicles, signals }: NetworkFrame) => {
       const activeNetwork = networkRef.current;
-      const engine = engineRef.current;
-      if (activeNetwork && engine && deckRef.current) {
-        const { vehicles, signals } = playingRef.current
-          ? engine.tick(dt)
-          : engine.tick(0);
-        const zoom = mapRef.current?.getZoom() ?? 17.2;
-        deckRef.current.setProps({ layers: buildSceneLayers(activeNetwork, vehicles, signals, zoom) });
-        if (playingRef.current && ts - lastPublishRef.current >= 500 && !publishingRef.current) {
-          lastPublishRef.current = ts;
-          publishingRef.current = true;
-          void publishFrame(vehicles, signals)
-            .then(() => setFeedState('live'))
-            .catch(() => setFeedState('offline'))
-            .finally(() => { publishingRef.current = false; });
-        }
-      }
-      animRef.current = requestAnimationFrame(loop);
+      if (!activeNetwork || !deckRef.current) return;
+      deckRef.current.setProps({ layers: buildSceneLayers(activeNetwork, vehicles, signals, mapRef.current?.getZoom() ?? 17.2) });
     };
-    animRef.current = requestAnimationFrame(loop);
+    const releaseTelemetry = networkTelemetry.retain(onFrame, setFeedState);
 
     return () => {
-      cancelAnimationFrame(animRef.current);
+      releaseTelemetry();
       deck.finalize();
       map.remove();
     };
@@ -132,15 +99,19 @@ export function SimulationStudio() {
 
   const changeVehicleCount = (count: number) => {
     setVehicleCount(count);
-    engineRef.current?.setVehicleCount(count);
+    networkTelemetry.setVehicleCount(count);
   };
 
   const changeChaos = (value: number) => {
     setChaos(value);
-    engineRef.current?.setChaos(value);
+    networkTelemetry.setChaos(value);
   };
 
-  const reset = resetNetwork;
+  const reset = () => {
+    networkTelemetry.reset(vehicleCount);
+    const network = networkRef.current;
+    if (network) mapRef.current?.flyTo({ center: network.center, zoom: 15.35, duration: 650, essential: true });
+  };
 
   return (
     <div style={s.container}>
@@ -186,7 +157,7 @@ export function SimulationStudio() {
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setPlaying((p) => !p)} style={s.actionBtn}>
+            <button onClick={() => setPlaying((wasPlaying) => { networkTelemetry.setPaused(wasPlaying); return !wasPlaying; })} style={s.actionBtn}>
               {playing ? <Pause size={14} /> : <Play size={14} />} {playing ? 'Pause' : 'Play'}
             </button>
             <button onClick={reset} style={s.actionBtn}><RotateCcw size={14} /> Reset</button>
@@ -203,35 +174,6 @@ export function SimulationStudio() {
       </div>
     </div>
   );
-}
-
-async function publishFrame(vehicles: VehicleState[], signals: TrafficSignalState[]): Promise<void> {
-  const events = vehicles.map((vehicle) => ({
-    event_type: 'actor.state.updated', timestamp_utc: vehicle.ts, source: 'junction-network',
-    payload: { ...vehicle, vehicle_id: vehicle.actor_id, vehicle_type: ACTOR_TYPE_FOR_ADAPTER[vehicle.actor_type] },
-  }));
-  const telemetry = await fetch('/v1/world-state/ingest', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }),
-  });
-  if (!telemetry.ok) throw new Error(`vehicle ingest failed (${telemetry.status})`);
-  const responses = await Promise.all(signals.map((signal) => {
-    const movements = Object.fromEntries((signal.phases ?? []).map((phase) => [phase.movement_id, phase.state]));
-    const currentPhase = signal.phases?.find((phase) => phase.state === 'GREEN')?.movement_id
-      ?? signal.phases?.[0]?.state
-      ?? 'RED';
-    // Normalize the display-friendly signal shape to the gateway's canonical
-    // TrafficSignalState contract at the adapter boundary.
-    const canonicalSignal = {
-      schema_version: '1.0', signal_id: signal.signal_id,
-      intersection_id: signal.intersection_id ?? signal.junction_id ?? 'junction-network',
-      ts: signal.ts, position: signal.position, current_phase: currentPhase,
-      movements, source: signal.source,
-    };
-    return fetch('/v1/ingest/signal-state', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(canonicalSignal),
-    });
-  }));
-  if (responses.some((response) => !response.ok)) throw new Error('signal ingest failed');
 }
 
 function buildSceneLayers(network: JunctionNetwork, vehicles: VehicleState[], signals: TrafficSignalState[], zoom: number) {

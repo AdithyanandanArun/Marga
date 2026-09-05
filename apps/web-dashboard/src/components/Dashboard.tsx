@@ -7,6 +7,7 @@ import { Inspector } from './Inspector';
 import { SystemHealth } from './SystemHealth';
 import { LayerControls } from './LayerControls';
 import { WorldStream } from '../net/worldStream';
+import { networkTelemetry } from '../simulation/networkTelemetry';
 import { useUIStore } from '../state/uiStore';
 import { useWorldStore } from '../state/worldStore';
 import type { RiskEvent, VehicleState } from '../types/canonical';
@@ -39,7 +40,8 @@ export function Dashboard() {
   useEffect(() => {
     const stream = new WorldStream({ onConnectionChange: setGatewayConnected });
     stream.connect();
-    return () => stream.disconnect();
+    const releaseTelemetry = networkTelemetry.retain();
+    return () => { stream.disconnect(); releaseTelemetry(); };
   }, []);
 
   const primaryRisk = useMemo(() => selectPrimaryRisk(risks.values()), [risks]);

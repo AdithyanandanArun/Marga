@@ -32,6 +32,13 @@ class RiskEngine:
             return None
         plane = LocalTangentPlane(first.position.lat, first.position.lon)
         east, north = plane.project(second.position)
+        # Constant-velocity extrapolation is meaningful only around the same
+        # local conflict area. Without this guard, parallel roads in a larger
+        # network can mathematically intersect many seconds ahead and flood
+        # the operator with false alerts.
+        current_distance = (east**2 + north**2) ** 0.5
+        if current_distance > 75.0:
+            return None
         import math
 
         first_heading = math.radians(first.heading_deg)
@@ -59,6 +66,15 @@ class RiskEngine:
         if min_distance > clearance or time_to_conflict >= self.policy.horizon_s:
             return None
         heading_delta = abs(angular_difference_deg(first.heading_deg, second.heading_deg))
+        # Two vehicles moving together on separate lanes should not produce a
+        # collision alert merely because their projected centre lines overlap.
+        if (
+            first.road_segment_id
+            and first.road_segment_id == second.road_segment_id
+            and heading_delta <= 30
+            and current_distance > 18.0
+        ):
+            return None
         if heading_delta >= 150:
             risk_type = RiskType.HEAD_ON
         elif heading_delta <= 30:

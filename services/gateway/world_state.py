@@ -132,7 +132,16 @@ def _refresh_risks() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
 async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
     prior_data = _entities.get(("vehicle", state.actor_id))
     prior = VehicleState.model_validate(prior_data) if prior_data else None
-    fused = _position_fusion.fuse_with_previous(prior, state)
+    # A simulator (or a single OBU) emits sequential observations of the same
+    # source. Treating the prior timestamp as an independent position sensor
+    # lags the body position while retaining the current heading, so vehicles
+    # visibly point across the lane during turns. Fusion is reserved for truly
+    # independent sources; same-source telemetry is already the latest state.
+    fused = (
+        state
+        if prior is not None and prior.source == state.source
+        else _position_fusion.fuse_with_previous(prior, state)
+    )
     upserts = [_store_model("vehicle", fused.actor_id, fused)]
     risk_upserts, risk_deletes = _refresh_risks()
     upserts.extend(risk_upserts)
