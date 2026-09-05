@@ -90,12 +90,22 @@ export function createActorLayer(
         id: 'pedestrians',
         data: pedestrians,
         getPosition: (d: PedestrianState) => [d.position.lon, d.position.lat],
-        getRadius: zoom > 15 ? 5 : 3,
-        getFillColor: PEDESTRIAN_COLOR,
+        getRadius: zoom > 15 ? 7 : 5,
+        getFillColor: [...PEDESTRIAN_COLOR, 245] as [number, number, number, number],
+        getLineColor: [220, 255, 235, 255],
+        lineWidthMinPixels: 2,
+        stroked: true,
         pickable: true,
         radiusUnits: 'pixels',
       }),
     );
+    layers.push(new TextLayer({
+      id: 'pedestrian-labels', data: pedestrians,
+      getPosition: (d: PedestrianState) => [d.position.lon, d.position.lat],
+      getText: () => 'P', getColor: [255, 255, 255, 255], getSize: 10,
+      sizeUnits: 'pixels', getPixelOffset: [0, -9], getTextAnchor: 'middle',
+      getAlignmentBaseline: 'bottom', billboard: true, pickable: false,
+    }));
   }
 
   if (zoom > 13 && dynamicActors.length > 0) {

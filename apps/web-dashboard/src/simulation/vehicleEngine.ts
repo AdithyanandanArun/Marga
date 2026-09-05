@@ -18,9 +18,11 @@ interface SpeedProfile {
 // lanes behaves nothing like a loaded truck easing off, so each type gets its
 // own accel/brake feel rather than one shared curve.
 const SPEED_PROFILE: Record<ActorType, SpeedProfile> = {
-  CAR: { cruiseMin: 5, cruiseMax: 13, burstMax: 19, accel: 3.2, brakeDecel: 4.6, weave: 0 },
-  BIKE: { cruiseMin: 3, cruiseMax: 11, burstMax: 17, accel: 3.8, brakeDecel: 5.2, weave: 0.9 },
-  AUTO: { cruiseMin: 3, cruiseMax: 9, burstMax: 12, accel: 2.4, brakeDecel: 3.6, weave: 0.4 },
+  CAR: { cruiseMin: 6, cruiseMax: 14, burstMax: 20, accel: 3.2, brakeDecel: 4.6, weave: 0 },
+  // Two-wheelers and autos are small and agile in mixed Indian traffic; they
+  // should filter through a gap, not crawl at sub-walking speed on an open arm.
+  BIKE: { cruiseMin: 5, cruiseMax: 14, burstMax: 20, accel: 4.2, brakeDecel: 5.2, weave: 0.9 },
+  AUTO: { cruiseMin: 4.5, cruiseMax: 11, burstMax: 14, accel: 2.8, brakeDecel: 3.6, weave: 0.4 },
   BUS: { cruiseMin: 4, cruiseMax: 10, burstMax: 12, accel: 1.3, brakeDecel: 2.4, weave: 0 },
   TRUCK: { cruiseMin: 3, cruiseMax: 9, burstMax: 11, accel: 1.1, brakeDecel: 2.2, weave: 0 },
   AMBULANCE: { cruiseMin: 8, cruiseMax: 16, burstMax: 22, accel: 3.6, brakeDecel: 4.2, weave: 0 },
@@ -28,7 +30,7 @@ const SPEED_PROFILE: Record<ActorType, SpeedProfile> = {
 };
 
 type SimState = 'CRUISE' | 'BURST' | 'BRAKE' | 'STOPPED';
-type StopReason = 'CONTROL' | 'QUEUE' | 'CONFLICT' | 'ACCIDENT' | null;
+type StopReason = 'CONTROL' | 'QUEUE' | 'CONFLICT' | 'PEDESTRIAN' | 'ACCIDENT' | null;
 
 export interface SimulationIncident {
   incidentId: string;
@@ -92,6 +94,11 @@ export interface EngineOptions {
   /** Stable namespace supplied by the simulation adapter, not a UI identity. */
   actorIdPrefix?: string;
   junctionId?: string;
+  /** Optional demand weights supplied by the simulator adapter. A route with
+   * weight 4 is spawned roughly four times as often as one with weight 1.
+   * This describes an input demand profile; it does not alter routing or
+   * safety decisions once vehicles are live. */
+  routeDemandWeights?: Record<string, number>;
 }
 
 function randRange(min: number, max: number): number {
@@ -112,10 +119,12 @@ export class JunctionSimEngine {
   private chaos: number;
   private readonly actorIdPrefix: string;
   private readonly junctionId: string;
+  private readonly routeDemandWeights: Record<string, number>;
   private clockMs = 0;
   private nextId = 0;
   private pendingSpawns = 0;
   private externalBodies: () => BodyPose[] = () => [];
+  private externalPedestrians: () => Point[] = () => [];
   /** Shifts the fixed-time signal cycle so an applied RL action changes the
    * phase actually shown to traffic. Negative values hold the current phase
    * longer; positive values bring the next phase forward. */
@@ -123,6 +132,7 @@ export class JunctionSimEngine {
   private gateClearFraction = new Map<string, number>();
 
   setExternalBodies(provider: () => BodyPose[]): void { this.externalBodies = provider; }
+  setExternalPedestrians(provider: () => Point[]): void { this.externalPedestrians = provider; }
   bodies(): BodyPose[] { return this.vehicles.map(v => this.pose(v)); }
   private pose(v: SimVehicle, progress = v.progress, lane = v.laneOffsetM): BodyPose {
     return { id: v.id, type: v.actorType, position: this.positionFor(v, progress, lane), heading: v.sampled.headingAt(progress) };
@@ -172,6 +182,7 @@ export class JunctionSimEngine {
     this.chaos = opts.chaos;
     this.actorIdPrefix = opts.actorIdPrefix ?? 'sim';
     this.junctionId = opts.junctionId ?? 'sim-junction';
+    this.routeDemandWeights = opts.routeDemandWeights ?? {};
     this.setVehicleCount(opts.vehicleCount);
   }
 
@@ -469,6 +480,29 @@ export class JunctionSimEngine {
     return distanceToStopM <= 0.75 ? 0 : Math.sqrt(2 * brakeDecel * distanceToStopM);
   }
 
+  /** A pedestrian already in the crossing has right of way. Estimate the
+   * along-road distance to the person and brake to a stop before the crossing
+   * line; this is intentionally independent of the signal state so a person
+   * remains protected during amber, railway-gate changes, and unsignalised
+   * approaches. */
+  private pedestrianSpeedLimit(v: SimVehicle, brakeDecel: number): number | null {
+    const own = this.positionFor(v);
+    const heading = v.sampled.headingAt(v.progress) * Math.PI / 180;
+    const forward = [Math.sin(heading), Math.cos(heading)];
+    const lateral = [Math.cos(heading), -Math.sin(heading)];
+    let nearestAhead = Infinity;
+    for (const pedestrian of this.externalPedestrians()) {
+      const dx = (pedestrian[0] - own[0]) * 111320 * Math.cos(own[1] * Math.PI / 180);
+      const dy = (pedestrian[1] - own[1]) * 111320;
+      const along = dx * forward[0] + dy * forward[1];
+      const across = Math.abs(dx * lateral[0] + dy * lateral[1]);
+      if (along >= -1.5 && along <= 24 && across <= 5.5) nearestAhead = Math.min(nearestAhead, along);
+    }
+    if (!Number.isFinite(nearestAhead)) return null;
+    const stoppingDistance = Math.max(0, nearestAhead - 3.2);
+    return stoppingDistance <= 0.8 ? 0 : Math.sqrt(2 * brakeDecel * stoppingDistance);
+  }
+
   private positionFor(v: SimVehicle, progress = v.progress, laneOffsetM = v.laneOffsetM): Point {
     const point = v.sampled.pointAt(progress);
     const heading = v.sampled.headingAt(progress) * Math.PI / 180;
@@ -525,7 +559,7 @@ export class JunctionSimEngine {
 
   /** A red signal or closed gate is a legitimate queue, never an accident. */
   private expectedControlHold(vehicle: SimVehicle): boolean {
-    return this.requiresStopAtLine(vehicle);
+    return this.requiresStopAtLine(vehicle) || vehicle.stopReason === 'PEDESTRIAN';
   }
 
   private identifyStalledIncidents(): SimulationIncident[] {
@@ -765,10 +799,13 @@ export class JunctionSimEngine {
 
       v.targetSpeed = v.desiredSpeed;
       const stopLimit = this.stopLineSpeedLimit(v, profile.brakeDecel);
-      if (stopLimit !== null) {
-        v.targetSpeed = Math.min(v.targetSpeed, stopLimit);
-        v.state = stopLimit === 0 ? 'STOPPED' : 'BRAKE';
-        if (stopLimit === 0) v.stopReason = 'CONTROL';
+      const pedestrianLimit = this.pedestrianSpeedLimit(v, profile.brakeDecel);
+      if (stopLimit === null && pedestrianLimit === null && v.stopReason === 'PEDESTRIAN') v.stopReason = null;
+      if (stopLimit !== null || pedestrianLimit !== null) {
+        const limit = Math.min(stopLimit ?? Infinity, pedestrianLimit ?? Infinity);
+        v.targetSpeed = Math.min(v.targetSpeed, limit);
+        v.state = limit === 0 ? 'STOPPED' : 'BRAKE';
+        if (limit === 0) v.stopReason = pedestrianLimit !== null && (stopLimit === null || pedestrianLimit <= stopLimit) ? 'QUEUE' : 'CONTROL';
       } else if (now >= v.nextDecisionAt) {
         const roll = Math.random();
         const burstChance = 0.1 + this.chaos * 0.3;
@@ -781,7 +818,7 @@ export class JunctionSimEngine {
           // Driver variability can produce firm braking, but cannot invent a
           // stationary vehicle in the middle of an open road.
           v.state = 'BRAKE';
-          v.targetSpeed = randRange(Math.max(0.8, profile.cruiseMin * 0.25), profile.cruiseMin * 0.7);
+          v.targetSpeed = randRange(Math.max(1.8, profile.cruiseMin * 0.4), profile.cruiseMin * 0.75);
           v.nextDecisionAt = now + randRange(500, 1600);
         } else {
           v.state = 'CRUISE';
@@ -957,7 +994,16 @@ export class JunctionSimEngine {
   }
 
   private chooseRoute(candidates: RouteDef[]): RouteDef {
-    return this.isCongested() ? this.leastLoadedRoute(candidates) : pick(candidates);
+    if (this.isCongested()) return this.leastLoadedRoute(candidates);
+    const weighted = candidates.map((route) => ({ route, weight: Math.max(0, this.routeDemandWeights[route.id] ?? 1) }));
+    const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+    if (total <= 0) return pick(candidates);
+    let cursor = Math.random() * total;
+    for (const item of weighted) {
+      cursor -= item.weight;
+      if (cursor <= 0) return item.route;
+    }
+    return weighted[weighted.length - 1].route;
   }
 
   private rerouteFromEntry(vehicle: SimVehicle): boolean {

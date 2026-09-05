@@ -21,6 +21,8 @@ export interface JunctionDefinition {
   center: Point;
   roads: Point[][];
   laneMarkings: Point[][];
+  /** Zebra stripes rendered across each pedestrian crossing approach. */
+  crosswalks: Point[][];
   areaPolygons: { polygon: Point[]; fill: [number, number, number, number]; line: [number, number, number, number] }[];
   rails?: Point[][];
   sleepers?: Point[][];
@@ -127,6 +129,22 @@ function laneMarkingsFor(arms: ArmGeom[]): Point[][] {
   return arms.map((arm) => [arm.far, arm.near]);
 }
 
+/** Build geometry from the road centreline, not fixed map coordinates. This
+ * keeps the feature valid when the network origin is moved or another region
+ * is imported. */
+function crosswalksForArms(lat: number, lon: number, angles: number[], radius: number): Point[][] {
+  const stripes: Point[][] = [];
+  for (const angle of angles) {
+    for (let offset = -4; offset <= 4; offset += 2) {
+      stripes.push([
+        projectPoint(lat, lon, angle, radius + offset, -7),
+        projectPoint(lat, lon, angle, radius + offset, 7),
+      ]);
+    }
+  }
+  return stripes;
+}
+
 /** Cross junction: four arms, full through + turn movements, two-phase signal. */
 function buildCross(lat: number, lon: number): JunctionDefinition {
   const center: Point = localPoint(lat, lon, 0, 0);
@@ -158,6 +176,7 @@ function buildCross(lat: number, lon: number): JunctionDefinition {
       [N.far, S.far],
     ],
     laneMarkings: laneMarkingsFor(arms),
+    crosswalks: crosswalksForArms(lat, lon, arms.map((arm) => arm.angle), JUNCTION_R + 8),
     areaPolygons: [{
       polygon: [
         localPoint(lat, lon, -box, -box), localPoint(lat, lon, -box, box),
@@ -202,6 +221,7 @@ function buildT(lat: number, lon: number): JunctionDefinition {
       [N.far, center],
     ],
     laneMarkings: laneMarkingsFor(arms),
+    crosswalks: crosswalksForArms(lat, lon, arms.map((arm) => arm.angle), JUNCTION_R + 8),
     areaPolygons: [{
       polygon: [
         localPoint(lat, lon, -box, -box), localPoint(lat, lon, -box, box),
@@ -330,6 +350,7 @@ function buildRoundabout(lat: number, lon: number): JunctionDefinition {
       // Painted, crossable lane line between the two circulating lanes.
       circle(lat, lon, (INNER_RING_R + OUTER_RING_R) / 2, 48),
     ],
+    crosswalks: crosswalksForArms(lat, lon, angles, OUTER_RING_R + 31),
     areaPolygons: [
       { polygon: circle(lat, lon, OUTER_RING_R + 5.5, 48), fill: SURFACE, line: JUNCTION_LINE },
       { polygon: circle(lat, lon, ISLAND_R, 32), fill: ISLAND_FILL, line: ISLAND_LINE },
@@ -383,6 +404,7 @@ function buildRailwayCrossing(lat: number, lon: number): JunctionDefinition {
     center,
     roads: [[W.far, E.far]],
     laneMarkings: [[W.far, W.near], [E.far, E.near]],
+    crosswalks: crosswalksForArms(lat, lon, [90, 270], RAIL_STOP_R + 3),
     areaPolygons: [{
       polygon: [
         localPoint(lat, lon, -boxHalfWidth, -boxHalfLen), localPoint(lat, lon, -boxHalfWidth, boxHalfLen),

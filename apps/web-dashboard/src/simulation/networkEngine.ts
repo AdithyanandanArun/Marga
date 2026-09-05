@@ -1,5 +1,5 @@
 import type { TrafficSignalState, VehicleState } from '../types/canonical';
-import { localPoint, type Point } from './geometry';
+import { localPoint, projectPoint, type Point } from './geometry';
 import { buildJunction, type JunctionDefinition, type JunctionType } from './junctionDefs';
 import { JunctionSimEngine, type SignalTopologyPayload, type SimulationIncident } from './vehicleEngine';
 import type { BodyPose } from './vehicleBody';
@@ -14,6 +14,16 @@ const NEIGHBOUR_REACH_M = 500;
 export interface JunctionNetwork {
   center: Point;
   junctions: JunctionDefinition[];
+  destinationRoads: DestinationRoad[];
+}
+
+export type DestinationRoadFeature = 'AIRPORT_CORRIDOR' | 'CITY_RAIL' | 'BUS_TERMINAL' | 'MARKET_ACCESS';
+
+export interface DestinationRoad {
+  id: string;
+  label: string;
+  feature: DestinationRoadFeature;
+  path: Point[];
 }
 
 export const NETWORK_LAYOUT: Array<{ type: JunctionType; northM: number; eastM: number; id: string }> = [
@@ -23,13 +33,34 @@ export const NETWORK_LAYOUT: Array<{ type: JunctionType; northM: number; eastM: 
   { type: 'T_JUNCTION', northM: -440, eastM: 0, id: 'south-t' },
 ];
 
+// A traffic network is not uniformly loaded. This adapter-level demand
+// profile keeps the central signalised approach visibly busy in the demo while
+// leaving capacity on the branches for rerouting to use.
+const NETWORK_DEMAND_SHARE = [0.55, 0.2, 0.15, 0.1];
+
+function demandAllocation(total: number): number[] {
+  const allocation = NETWORK_DEMAND_SHARE.map((share) => Math.floor(total * share));
+  let remainder = Math.max(0, total - allocation.reduce((sum, value) => sum + value, 0));
+  for (let index = 0; remainder > 0; index = (index + 1) % allocation.length, remainder -= 1) {
+    allocation[index] += 1;
+  }
+  return allocation;
+}
+
 export function buildJunctionNetwork(lat: number, lon: number): JunctionNetwork {
+  const destinationRoads: DestinationRoad[] = [
+    { id: 'destination-airport', label: 'Kempegowda International Airport', feature: 'AIRPORT_CORRIDOR', path: [projectPoint(lat, lon, 0, 220), projectPoint(lat, lon, 0, 520)] },
+    { id: 'destination-rail', label: 'KSR Bengaluru City Railway Station', feature: 'CITY_RAIL', path: [projectPoint(lat, lon, 270, 220), projectPoint(lat, lon, 270, 520)] },
+    { id: 'destination-bus', label: 'Majestic / BMTC Bus Terminal', feature: 'BUS_TERMINAL', path: [projectPoint(lat, lon, 90, 220), projectPoint(lat, lon, 90, 520)] },
+    { id: 'destination-market', label: 'KR Market', feature: 'MARKET_ACCESS', path: [projectPoint(lat, lon, 180, 220), projectPoint(lat, lon, 180, 520)] },
+  ];
   return {
     center: [lon, lat],
     junctions: NETWORK_LAYOUT.map(({ type, northM, eastM }) => {
       const point = localPoint(lat, lon, northM, eastM);
       return buildJunction(type, point[1], point[0]);
     }),
+    destinationRoads,
   };
 }
 
@@ -45,9 +76,8 @@ export class JunctionNetworkEngine {
   }
 
   setVehicleCount(vehicleCount: number): void {
-    const base = Math.floor(vehicleCount / this.engines.length);
-    const remainder = vehicleCount % this.engines.length;
-    this.engines.forEach((engine, index) => engine.setVehicleCount(base + (index < remainder ? 1 : 0)));
+    const allocation = demandAllocation(vehicleCount);
+    this.engines.forEach((engine, index) => engine.setVehicleCount(allocation[index] ?? 0));
   }
 
   setChaos(chaos: number): void {
@@ -76,8 +106,11 @@ export class JunctionNetworkEngine {
     return engine ? engine.applySignalAction(action) : false;
   }
 
-  tick(dtMs: number): { vehicles: VehicleState[]; signals: TrafficSignalState[]; incidents: SimulationIncident[]; despawnedActorIds: string[] } {
-    const frames = this.engines.map((engine) => engine.tick(dtMs));
+  tick(dtMs: number, pedestrianPositions: Point[] = []): { vehicles: VehicleState[]; signals: TrafficSignalState[]; incidents: SimulationIncident[]; despawnedActorIds: string[] } {
+    const frames = this.engines.map((engine) => {
+      engine.setExternalPedestrians(() => pedestrianPositions);
+      return engine.tick(dtMs);
+    });
     for (const [sourceIndex, frame] of frames.entries()) {
       for (const exiting of frame.exits) {
         const recipients = this.engines
@@ -127,14 +160,21 @@ export class JunctionNetworkEngine {
   }
 
   private rebuild(vehicleCount: number): void {
-    const base = Math.floor(vehicleCount / this.network.junctions.length);
-    const remainder = vehicleCount % this.network.junctions.length;
+    const allocation = demandAllocation(vehicleCount);
     this.engines = this.network.junctions.map((junction, index) => new JunctionSimEngine({
       junction,
-      vehicleCount: base + (index < remainder ? 1 : 0),
+      vehicleCount: allocation[index] ?? 0,
       chaos: this.chaos,
       actorIdPrefix: `network-${NETWORK_LAYOUT[index].id}`,
       junctionId: `network-${NETWORK_LAYOUT[index].id}`,
+      // The shared hub starts with a realistic directional demand imbalance:
+      // the north approach is busy while the east approach is light. This is
+      // an adapter-level input profile so the RL controller has something
+      // meaningful to observe; congestion-aware routing can still redistribute
+      // vehicles when the busy approach fills up.
+      routeDemandWeights: index === 0
+        ? Object.fromEntries(junction.routes.map((route) => [route.id, route.id.startsWith('N-') ? 6 : route.id.startsWith('E-') ? 1 : 2]))
+        : undefined,
     }));
     // Adjacent junctions share an arm tip exactly (220 m arms, 440 m spacing),
     // so vehicles from two engines can occupy the same tarmac at a handover

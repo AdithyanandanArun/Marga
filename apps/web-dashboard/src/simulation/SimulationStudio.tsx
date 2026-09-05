@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import maplibregl from 'maplibre-gl';
 import { Deck } from '@deck.gl/core';
-import { PathLayer, PolygonLayer } from '@deck.gl/layers';
+import { PathLayer, PolygonLayer, TextLayer } from '@deck.gl/layers';
 import { ArrowLeft, CheckCircle2, Pause, Play, Radio, RotateCcw, TrainTrack } from 'lucide-react';
-import type { VehicleState, TrafficSignalState } from '../types/canonical';
+import type { PedestrianState, VehicleState, TrafficSignalState } from '../types/canonical';
 import { createActorLayer } from '../map/layers/actors';
 import { createInfrastructureLayer } from '../map/layers/infrastructure';
 import {
@@ -36,9 +36,10 @@ export function SimulationStudio() {
   const mapRef = useRef<maplibregl.Map | null>(null);
   const deckRef = useRef<Deck | null>(null);
   const networkRef = useRef<JunctionNetwork | null>(null);
+  const lastRenderAt = useRef(0);
 
-  const [vehicleCount, setVehicleCount] = useState(24);
-  const [chaos, setChaos] = useState(0.5);
+  const [vehicleCount, setVehicleCount] = useState(30);
+  const [chaos, setChaos] = useState(0.65);
   // Seeded from the shared runtime rather than assumed: pausing here and
   // navigating away leaves the singleton paused, so a fresh `true` would show
   // a "Pause" button over a world that is standing still.
@@ -84,10 +85,13 @@ export function SimulationStudio() {
       });
     });
 
-    const onFrame = ({ vehicles, signals }: NetworkFrame) => {
+    const onFrame = ({ vehicles, pedestrians, signals }: NetworkFrame) => {
       const activeNetwork = networkRef.current;
       if (!activeNetwork || !deckRef.current) return;
-      deckRef.current.setProps({ layers: buildSceneLayers(activeNetwork, vehicles, signals, mapRef.current?.getZoom() ?? 17.2) });
+      const now = performance.now();
+      if (now - lastRenderAt.current < 33) return;
+      lastRenderAt.current = now;
+      deckRef.current.setProps({ layers: buildSceneLayers(activeNetwork, vehicles, pedestrians, signals, mapRef.current?.getZoom() ?? 17.2) });
     };
     const releaseTelemetry = networkTelemetry.retain(onFrame, setFeedState);
 
@@ -141,7 +145,7 @@ export function SimulationStudio() {
               <span><CheckCircle2 size={13} /> Railway crossing branch</span>
               <span><CheckCircle2 size={13} /> T-junction branch</span>
             </div>
-            <p style={s.description}>One road network, with each branch joined to the central hub. Signal phases and gate state are sent to the gateway with every live frame.</p>
+            <p style={s.description}>One road network, with each branch joined to the central hub. The 30-vehicle mixed-traffic baseline deliberately exposes queues and predicted conflicts while preserving body-level collision avoidance. Signal phases and gate state are sent to the gateway with every live frame.</p>
           </div>
 
           <div style={s.field}>
@@ -183,12 +187,14 @@ export function SimulationStudio() {
   );
 }
 
-function buildSceneLayers(network: JunctionNetwork, vehicles: VehicleState[], signals: TrafficSignalState[], zoom: number) {
+function buildSceneLayers(network: JunctionNetwork, vehicles: VehicleState[], pedestrians: PedestrianState[], signals: TrafficSignalState[], zoom: number) {
   const roads = network.junctions.flatMap((junction) => junction.roads);
   const laneMarkings = network.junctions.flatMap((junction) => junction.laneMarkings);
   const areaPolygons = network.junctions.flatMap((junction) => junction.areaPolygons);
   const rails = network.junctions.flatMap((junction) => junction.rails ?? []);
   const sleepers = network.junctions.flatMap((junction) => junction.sleepers ?? []);
+  const crosswalks = network.junctions.flatMap((junction) => junction.crosswalks);
+  const destinationRoads = network.destinationRoads;
   return [
     new PathLayer({
       id: 'sim-road-bed', data: roads, getPath: (d: Point[]) => d,
@@ -211,6 +217,9 @@ function buildSceneLayers(network: JunctionNetwork, vehicles: VehicleState[], si
       getLineColor: (d: { line: [number, number, number, number] }) => d.line,
       getLineWidth: 1, lineWidthUnits: 'pixels', stroked: true, filled: true, pickable: false,
     }),
+    new PathLayer({ id: 'sim-zebra-crossings', data: crosswalks, getPath: (d: Point[]) => d, getColor: [245, 245, 245, 220], getWidth: 1.2, widthUnits: 'meters', pickable: false }),
+    new PathLayer({ id: 'sim-destination-roads', data: destinationRoads, getPath: (d: typeof destinationRoads[number]) => d.path, getColor: (d: typeof destinationRoads[number]) => d.feature === 'CITY_RAIL' ? [245, 158, 11, 220] : d.feature === 'BUS_TERMINAL' ? [167, 139, 250, 220] : d.feature === 'AIRPORT_CORRIDOR' ? [34, 211, 238, 220] : [251, 146, 60, 220], getWidth: 8, widthUnits: 'meters', getDashArray: [12, 8], dashJustified: true, pickable: false }),
+    new TextLayer({ id: 'sim-destination-labels', data: destinationRoads, getPosition: (d: typeof destinationRoads[number]) => d.path[d.path.length - 1], getText: (d: typeof destinationRoads[number]) => d.label, getSize: 13, sizeUnits: 'pixels', getColor: [226, 232, 240, 230], getBackgroundColor: [15, 23, 42, 210], background: true, getPixelOffset: [0, -12], billboard: true, pickable: false }),
     ...(rails.length ? [new PathLayer({
       id: 'sim-rails', data: rails, getPath: (d: Point[]) => d,
       getColor: RAIL_TRACK_COLOR, getWidth: 0.18, widthUnits: 'meters', pickable: false,
@@ -219,7 +228,7 @@ function buildSceneLayers(network: JunctionNetwork, vehicles: VehicleState[], si
       id: 'sim-sleepers', data: sleepers, getPath: (d: Point[]) => d,
       getColor: SLEEPER_TIE_COLOR, getWidth: 0.35, widthUnits: 'meters', pickable: false,
     })] : []),
-    ...createActorLayer(vehicles, [], [], zoom, false, null),
+    ...createActorLayer(vehicles, pedestrians, [], zoom, false, null),
     ...createInfrastructureLayer(signals, [], [], zoom),
   ];
 }

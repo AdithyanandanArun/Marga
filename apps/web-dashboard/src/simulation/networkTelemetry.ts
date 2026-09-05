@@ -1,10 +1,12 @@
-import type { TrafficSignalState, VehicleState } from '../types/canonical';
+import type { PedestrianState, TrafficSignalState, VehicleState } from '../types/canonical';
+import { distanceMeters } from './geometry';
 import { buildJunctionNetwork, JunctionNetworkEngine } from './networkEngine';
 import type { SimulationIncident } from './vehicleEngine';
 
 const NETWORK_LAT = 12.9550;
 const NETWORK_LON = 77.6200;
 const SIMULATION_TIME_SCALE = 1.8;
+const SIMULATION_STEP_MS = 33;
 // 4 Hz is sufficient for the displayed road motion and keeps one browser
 // adapter from flooding the gateway with duplicate animation-frame updates.
 const TELEMETRY_INTERVAL_MS = 250;
@@ -15,9 +17,31 @@ const SIGNAL_COMMAND_INTERVAL_MS = 1000;
 const ACTOR_TYPE_FOR_ADAPTER: Record<VehicleState['actor_type'], string> = {
   CAR: 'car', BIKE: 'motorcycle', AUTO: 'auto_rickshaw', BUS: 'bus', TRUCK: 'truck', AMBULANCE: 'emergency', OTHER: 'other',
 };
+const FEATURE_NETWORK = buildJunctionNetwork(NETWORK_LAT, NETWORK_LON);
+
+type Point = [number, number];
+const pedestrianCrossings: Point[][] = FEATURE_NETWORK.junctions.flatMap((junction) =>
+  junction.crosswalks.filter((_, index) => index % 5 === 2).slice(0, 2));
+
+interface PedestrianProfile {
+  speedMps: number;
+  direction: 1 | -1;
+  pauseUntilMs: number;
+  nextPauseAtMs: number;
+}
+
+const pedestrianProfiles: PedestrianProfile[] = pedestrianCrossings.map((_, index) => ({
+  // Stable human walking speeds: slower walkers and brisk walkers, all within
+  // a realistic range rather than a new random speed every animation frame.
+  speedMps: 0.55 + Math.random() * 0.85,
+  direction: Math.random() < 0.5 ? 1 : -1,
+  pauseUntilMs: 0,
+  nextPauseAtMs: 3_000 + Math.random() * 4_000 + index * 700,
+}));
 
 export interface NetworkFrame {
   vehicles: VehicleState[];
+  pedestrians: PedestrianState[];
   signals: TrafficSignalState[];
   incidents: SimulationIncident[];
   despawnedActorIds: string[];
@@ -28,7 +52,9 @@ export type FeedState = 'connecting' | 'live' | 'offline';
  * It is intentionally a singleton: navigating between views cannot create a
  * second, divergent traffic world or freeze the gateway feed. */
 class NetworkTelemetryRuntime {
-  private engine = new JunctionNetworkEngine(buildJunctionNetwork(NETWORK_LAT, NETWORK_LON), 24, 0.5);
+  // A 40-vehicle mixed-traffic baseline makes queues and conflict prediction
+  // visible without turning the map into an unreadable wall of actors.
+  private engine = new JunctionNetworkEngine(buildJunctionNetwork(NETWORK_LAT, NETWORK_LON), 30, 0.65);
   private subscribers = new Set<(frame: NetworkFrame) => void>();
   private statusSubscribers = new Set<(status: FeedState) => void>();
   private frameHandle: number | null = null;
@@ -41,6 +67,55 @@ class NetworkTelemetryRuntime {
   private lastSignalPoll = 0;
   private pollingSignals = false;
   private topologiesRegistered = false;
+  private lastSimulationTimestamp = 0;
+  private simulationFrame: ReturnType<JunctionNetworkEngine['tick']> | null = null;
+  private pedestrianProgress: number[] = pedestrianCrossings.map((_, index) => (index % 2 === 0 ? 0.08 : 0.92));
+  private lastPedestrianTimestamp = 0;
+
+  private pedestriansAt(timestampMs: number, vehicles: VehicleState[] = []): PedestrianState[] {
+    const dtS = this.lastPedestrianTimestamp > 0
+      ? Math.min(0.5, Math.max(0, timestampMs - this.lastPedestrianTimestamp) / 1000)
+      : 0;
+    this.lastPedestrianTimestamp = timestampMs;
+    return pedestrianCrossings.map((crossing, index) => {
+      const [start, end] = crossing;
+      const profile = pedestrianProfiles[index];
+      let progress = this.pedestrianProgress[index];
+      const current: Point = [
+        start[0] + (end[0] - start[0]) * progress,
+        start[1] + (end[1] - start[1]) * progress,
+      ];
+      const crossingActive = progress > 0.04 && progress < 0.96;
+      const movingVehicleNear = crossingActive && vehicles.some((vehicle) =>
+        vehicle.speed_mps > 0.35
+        && distanceMeters([vehicle.position.lon, vehicle.position.lat], current, current[1]) < 14,
+      );
+      if (timestampMs >= profile.nextPauseAtMs && timestampMs >= profile.pauseUntilMs) {
+        profile.pauseUntilMs = timestampMs + 500 + ((index * 431) % 1_300);
+        profile.nextPauseAtMs = profile.pauseUntilMs + 3_500 + ((index * 719) % 4_500);
+      }
+      const canWalk = !movingVehicleNear && timestampMs >= profile.pauseUntilMs;
+      if (canWalk && dtS > 0) {
+        const lengthM = distanceMeters(start, end, current[1]);
+        progress += profile.direction * (profile.speedMps * dtS) / Math.max(1, lengthM);
+        if (progress >= 0.98 || progress <= 0.02) {
+          progress = Math.max(0.02, Math.min(0.98, progress));
+          profile.direction = profile.direction === 1 ? -1 : 1;
+        }
+        this.pedestrianProgress[index] = progress;
+      }
+      const lon = start[0] + (end[0] - start[0]) * progress;
+      const lat = start[1] + (end[1] - start[1]) * progress;
+      const heading = (Math.atan2(end[0] - start[0], end[1] - start[1]) * 180 / Math.PI + 360) % 360;
+      return {
+        schema_version: '1.0', actor_id: `network-pedestrian-${index}`, ts: new Date().toISOString(),
+        position: { lat, lon }, position_uncertainty_m: 1.2, speed_mps: canWalk ? profile.speedMps : 0,
+        heading_deg: profile.direction === 1 ? heading : (heading + 180) % 360,
+        road_segment_id: `crosswalk-${index}`, source: 'SIMULATION',
+        path_hint: 'zebra-crossing', road_context: 'CROSSWALK', confidence: 0.95,
+      } as PedestrianState;
+    });
+  }
 
   retain(onFrame?: (frame: NetworkFrame) => void, onStatus?: (status: FeedState) => void): () => void {
     this.references += 1;
@@ -78,6 +153,8 @@ class NetworkTelemetryRuntime {
 
   reset(count: number): void {
     this.engine.reset(count);
+    this.lastSimulationTimestamp = 0;
+    this.simulationFrame = null;
     // A rebuilt network is a new set of junctions; re-announce them so the
     // controller never acts on a topology that no longer exists.
     this.topologiesRegistered = false;
@@ -95,7 +172,23 @@ class NetworkTelemetryRuntime {
       try {
         const dt = this.lastTick ? Math.min(200, timestamp - this.lastTick) : 16;
         this.lastTick = timestamp;
-        const frame = this.engine.tick(this.paused ? 0 : dt * SIMULATION_TIME_SCALE);
+        const pedestrianTimestamp = this.paused ? this.lastPedestrianTimestamp : timestamp;
+        const pedestriansBeforeTick = this.pedestriansAt(pedestrianTimestamp);
+        if (!this.simulationFrame || timestamp - this.lastSimulationTimestamp >= SIMULATION_STEP_MS) {
+          const simulationDt = this.lastSimulationTimestamp > 0
+            ? Math.min(200, timestamp - this.lastSimulationTimestamp)
+            : dt;
+          this.lastSimulationTimestamp = timestamp;
+          this.simulationFrame = this.engine.tick(
+            this.paused ? 0 : simulationDt * SIMULATION_TIME_SCALE,
+            pedestriansBeforeTick.map((pedestrian) => [pedestrian.position.lon, pedestrian.position.lat]),
+          );
+        }
+        const frame = { ...this.simulationFrame, pedestrians: pedestriansBeforeTick };
+        // Re-evaluate only the displayed walking/paused state after vehicle
+        // movement. The same timestamp gives zero pedestrian displacement, so
+        // a person can pause immediately when a moving vehicle reaches them.
+        frame.pedestrians = this.pedestriansAt(pedestrianTimestamp, frame.vehicles);
         this.subscribers.forEach((subscriber) => {
           // One subscriber's failure must not stop the others from rendering.
           try { subscriber(frame); } catch { /* renderer detached or failed */ }
@@ -103,7 +196,7 @@ class NetworkTelemetryRuntime {
         if (timestamp - this.lastPublish >= TELEMETRY_INTERVAL_MS && !this.publishing) {
           this.lastPublish = timestamp;
           this.publishing = true;
-          void publishFrame(frame.vehicles, frame.signals, frame.incidents, frame.despawnedActorIds)
+          void publishFrame(frame.vehicles, frame.pedestrians, frame.signals, frame.incidents, frame.despawnedActorIds)
             .then(() => this.setFeedState('live'))
             .catch(() => this.setFeedState('offline'))
             .finally(() => { this.publishing = false; });
@@ -160,14 +253,21 @@ class NetworkTelemetryRuntime {
 
 async function publishFrame(
   vehicles: VehicleState[],
+  pedestrians: PedestrianState[],
   signals: TrafficSignalState[],
   incidents: SimulationIncident[],
   despawnedActorIds: string[],
 ): Promise<void> {
-  const events = vehicles.map((vehicle) => ({
+  const events = [
+    ...vehicles.map((vehicle) => ({
     event_type: 'actor.state.updated', timestamp_utc: vehicle.ts, source: 'junction-network',
     payload: { ...vehicle, vehicle_id: vehicle.actor_id, vehicle_type: ACTOR_TYPE_FOR_ADAPTER[vehicle.actor_type] },
-  }));
+    })),
+    ...pedestrians.map((pedestrian) => ({
+      event_type: 'actor.state.updated', timestamp_utc: pedestrian.ts, source: 'junction-network',
+      payload: { ...pedestrian, pedestrian_id: pedestrian.actor_id, actor_type: 'PEDESTRIAN' },
+    })),
+  ];
   const telemetry = await fetch('/v1/world-state/ingest', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events }),
   });
