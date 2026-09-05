@@ -7,6 +7,9 @@ const DEMO_CONFLICT = new Set(['ego_auto', 'conflict_bus']);
  * arbitrary deployments still fall back to the strongest live risk score. */
 export function selectPrimaryRisk(risks: Iterable<RiskEvent>): RiskEvent | undefined {
   return [...risks].sort((a, b) => {
+    const aHasWrongWay = a.affected_actor_ids.some((id) => id.includes('wrong_way'));
+    const bHasWrongWay = b.affected_actor_ids.some((id) => id.includes('wrong_way'));
+    if (aHasWrongWay !== bHasWrongWay) return aHasWrongWay ? -1 : 1;
     const aIsDemoConflict = a.affected_actor_ids.length === DEMO_CONFLICT.size && a.affected_actor_ids.every((id) => DEMO_CONFLICT.has(id));
     const bIsDemoConflict = b.affected_actor_ids.length === DEMO_CONFLICT.size && b.affected_actor_ids.every((id) => DEMO_CONFLICT.has(id));
     if (aIsDemoConflict !== bIsDemoConflict) return aIsDemoConflict ? -1 : 1;

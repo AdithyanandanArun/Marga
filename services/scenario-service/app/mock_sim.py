@@ -67,45 +67,54 @@ def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 # Each point is (lat, lon).
 # Actors start at waypoint[0] and move toward waypoint[-1].
 _ROUTES: dict[str, list[tuple[float, float]]] = {
-    # West approach → east exit  (ego_auto lane: offset +1 lane north)
+    # West approach → east exit. Directional lanes remain physically separated
+    # until the conflict box rather than converging down the entire road.
     "west_east": [
-        (_JCT_LAT + _m_to_dlat(2), _JCT_LON - _m_to_dlon(200)),
-        (_JCT_LAT + _m_to_dlat(2), _JCT_LON - _m_to_dlon(80)),
+        (_JCT_LAT + _m_to_dlat(6), _JCT_LON - _m_to_dlon(200)),
+        (_JCT_LAT + _m_to_dlat(6), _JCT_LON - _m_to_dlon(80)),
         (_JCT_LAT, _JCT_LON),
-        (_JCT_LAT - _m_to_dlat(2), _JCT_LON + _m_to_dlon(80)),
-        (_JCT_LAT - _m_to_dlat(2), _JCT_LON + _m_to_dlon(200)),
+        (_JCT_LAT - _m_to_dlat(6), _JCT_LON + _m_to_dlon(80)),
+        (_JCT_LAT - _m_to_dlat(6), _JCT_LON + _m_to_dlon(200)),
     ],
     # South approach → north exit  (conflict_bus lane: offset -1 lane west)
     "south_north": [
-        (_JCT_LAT - _m_to_dlat(200), _JCT_LON - _m_to_dlon(2)),
-        (_JCT_LAT - _m_to_dlat(80), _JCT_LON - _m_to_dlon(2)),
+        (_JCT_LAT - _m_to_dlat(200), _JCT_LON - _m_to_dlon(6)),
+        (_JCT_LAT - _m_to_dlat(80), _JCT_LON - _m_to_dlon(6)),
         (_JCT_LAT, _JCT_LON),
-        (_JCT_LAT + _m_to_dlat(80), _JCT_LON + _m_to_dlon(2)),
-        (_JCT_LAT + _m_to_dlat(200), _JCT_LON + _m_to_dlon(2)),
+        (_JCT_LAT + _m_to_dlat(80), _JCT_LON + _m_to_dlon(6)),
+        (_JCT_LAT + _m_to_dlat(200), _JCT_LON + _m_to_dlon(6)),
     ],
     # North approach → south exit  (bg_car_1 lane: offset +1 lane east)
     "north_south": [
-        (_JCT_LAT + _m_to_dlat(220), _JCT_LON + _m_to_dlon(2)),
-        (_JCT_LAT + _m_to_dlat(90), _JCT_LON + _m_to_dlon(2)),
+        (_JCT_LAT + _m_to_dlat(220), _JCT_LON + _m_to_dlon(6)),
+        (_JCT_LAT + _m_to_dlat(90), _JCT_LON + _m_to_dlon(6)),
         (_JCT_LAT, _JCT_LON),
-        (_JCT_LAT - _m_to_dlat(90), _JCT_LON - _m_to_dlon(2)),
-        (_JCT_LAT - _m_to_dlat(220), _JCT_LON - _m_to_dlon(2)),
+        (_JCT_LAT - _m_to_dlat(90), _JCT_LON - _m_to_dlon(6)),
+        (_JCT_LAT - _m_to_dlat(220), _JCT_LON - _m_to_dlon(6)),
     ],
     # East approach → west exit  (bg_car_2 lane: offset -1 lane south)
     "east_west": [
-        (_JCT_LAT - _m_to_dlat(2), _JCT_LON + _m_to_dlon(210)),
-        (_JCT_LAT - _m_to_dlat(2), _JCT_LON + _m_to_dlon(85)),
+        (_JCT_LAT - _m_to_dlat(6), _JCT_LON + _m_to_dlon(210)),
+        (_JCT_LAT - _m_to_dlat(6), _JCT_LON + _m_to_dlon(85)),
         (_JCT_LAT, _JCT_LON),
-        (_JCT_LAT + _m_to_dlat(2), _JCT_LON - _m_to_dlon(85)),
-        (_JCT_LAT + _m_to_dlat(2), _JCT_LON - _m_to_dlon(210)),
+        (_JCT_LAT + _m_to_dlat(6), _JCT_LON - _m_to_dlon(85)),
+        (_JCT_LAT + _m_to_dlat(6), _JCT_LON - _m_to_dlon(210)),
     ],
     # West approach → east exit, motorcycle (overtaking lane, offset further north)
     "west_east_moto": [
-        (_JCT_LAT + _m_to_dlat(4), _JCT_LON - _m_to_dlon(180)),
-        (_JCT_LAT + _m_to_dlat(4), _JCT_LON - _m_to_dlon(70)),
+        (_JCT_LAT + _m_to_dlat(10), _JCT_LON - _m_to_dlon(180)),
+        (_JCT_LAT + _m_to_dlat(10), _JCT_LON - _m_to_dlon(70)),
         (_JCT_LAT, _JCT_LON),
-        (_JCT_LAT - _m_to_dlat(4), _JCT_LON + _m_to_dlon(70)),
-        (_JCT_LAT - _m_to_dlat(4), _JCT_LON + _m_to_dlon(180)),
+        (_JCT_LAT - _m_to_dlat(10), _JCT_LON + _m_to_dlon(70)),
+        (_JCT_LAT - _m_to_dlat(10), _JCT_LON + _m_to_dlon(180)),
+    ],
+    # Deliberate wrong-way entry: east → west on the west→east carriageway.
+    "east_west_wrong": [
+        (_JCT_LAT + _m_to_dlat(6), _JCT_LON + _m_to_dlon(200)),
+        (_JCT_LAT + _m_to_dlat(6), _JCT_LON + _m_to_dlon(80)),
+        (_JCT_LAT, _JCT_LON),
+        (_JCT_LAT - _m_to_dlat(6), _JCT_LON - _m_to_dlon(80)),
+        (_JCT_LAT - _m_to_dlat(6), _JCT_LON - _m_to_dlon(200)),
     ],
 }
 
@@ -145,6 +154,7 @@ class _Actor:
     heading_deg: float = field(init=False)
     uncertainty_m: float = field(default=4.0, init=False)
     road_segment_id: str = field(default="", init=False)
+    route_progress_m: float = field(default=0.0, init=False)
 
     def __post_init__(self) -> None:
         self.target_speed = self.speed_mps
@@ -155,6 +165,7 @@ class _Actor:
         else:
             self.heading_deg = 0.0
         self.road_segment_id = f"jct_{self.route_id or self.actor_type}"
+        self.route_progress_m = self.initial_progress_m
         if self.initial_progress_m > 0:
             self._seek(self.initial_progress_m)
 
@@ -196,6 +207,7 @@ class _Actor:
             # demo instead of leaving an empty intersection after one pass.
             self.wp_idx = 0
             self.lat, self.lon = self.waypoints[0]
+            self.route_progress_m = 0.0
 
         next_lat, next_lon = self.waypoints[self.wp_idx + 1]
         dist_remaining = _haversine(self.lat, self.lon, next_lat, next_lon)
@@ -212,6 +224,7 @@ class _Actor:
         bearing_rad = math.radians(self.heading_deg)
         self.lat += (travel_m * math.cos(bearing_rad)) / _M_PER_DEG_LAT
         self.lon += (travel_m * math.sin(bearing_rad)) / _M_PER_DEG_LON
+        self.route_progress_m += travel_m
 
     def to_vehicle_state(self) -> dict[str, Any]:
         return {
@@ -291,6 +304,26 @@ def _apply_signal_compliance(actors: dict[str, _Actor], signals: _AdaptiveSignal
             continue
         approaching = actor.wp_idx <= 1 and _haversine(actor.lat, actor.lon, _JCT_LAT, _JCT_LON) < 45
         actor.set_target_speed(0.0 if approaching and not signals.is_green(actor.route_id) else actor.cruise_speed_mps)
+
+
+def _apply_lane_headway(actors: dict[str, _Actor]) -> None:
+    """Keep same-direction traffic at a physical following distance.
+
+    Vehicles on the same lane are not a collision by default: a follower slows
+    smoothly when its time headway falls below 1.7 seconds, producing a queue
+    behind a stop or blockage instead of overlapping bodies.
+    """
+    by_lane: dict[str, list[_Actor]] = {}
+    for actor in actors.values():
+        by_lane.setdefault(actor.route_id, []).append(actor)
+    for lane in by_lane.values():
+        ordered = sorted(lane, key=lambda actor: actor.route_progress_m, reverse=True)
+        for leader, follower in zip(ordered, ordered[1:]):
+            gap = leader.route_progress_m - follower.route_progress_m
+            safe_gap = max(9.0, follower.speed_mps * 1.7)
+            if 0 < gap < safe_gap:
+                braking_target = max(0.0, leader.speed_mps - (safe_gap - gap) * 0.45)
+                follower.set_target_speed(min(follower.target_speed, braking_target))
 
 
 async def _post_signal_states(client: Any, gateway_url: str, signals: _AdaptiveSignalController) -> None:
@@ -408,6 +441,13 @@ def _build_actors() -> dict[str, _Actor]:
                 route_id=route_id,
                 initial_progress_m=42.0 + slot * 68.0 + lane_index * 4.0,
             )
+    # Keep the scene at 25 actors while reserving one vehicle for the
+    # wrong-way recovery sequence.
+    actors.pop("traffic_west_east_moto_4")
+    actors["wrong_way_car"] = _Actor(
+        actor_id="wrong_way_car", actor_type="car", waypoints=_ROUTES["east_west_wrong"],
+        speed_mps=5.2, route_id="east_west_wrong",
+    )
     return actors
 
 
@@ -457,6 +497,7 @@ async def run_mock_simulation(
             # --- Tick all actors ---
             signals.step(dt, actors)
             _apply_signal_compliance(actors, signals)
+            _apply_lane_headway(actors)
             for actor in actors.values():
                 actor.step(dt)
 
@@ -525,16 +566,14 @@ async def _apply_phase(
             await _post_connectivity(client, gateway_url, "DIRECT_ONLY", all_ids)
 
     elif phase_idx == 2:
-        # t=28s: Conflict zone — ego_auto and conflict_bus brake for junction
-        logger.info("Phase 3: conflict approach — ego braking, bus slowing")
-        actors["ego_auto"].set_target_speed(1.0)
-        actors["conflict_bus"].set_target_speed(2.0)
+        # t=28s: wrong-way approach is now inside the predictive horizon.
+        logger.info("Phase 3: wrong-way approach — early V2X warning")
 
     elif phase_idx == 3:
-        # t=32s: Full stop — risk peak; backend risk engine detects TTC≈0
-        logger.info("Phase 4: conflict peak — ego stopped, bus stopped")
+        # t=32s: both fronts stop; lane-headway makes following traffic queue.
+        logger.info("Phase 4: wrong-way conflict — controlled stop and queue")
         actors["ego_auto"].set_target_speed(0.0)
-        actors["conflict_bus"].set_target_speed(0.0)
+        actors["wrong_way_car"].set_target_speed(0.0)
 
     elif phase_idx == 4:
         # t=40s: Connectivity restoring → FULL
@@ -551,7 +590,18 @@ async def _apply_phase(
                 await _post_position_quality(client, gateway_url, actor.actor_id, _GPS_NORMAL_M)
 
     elif phase_idx == 6:
-        # t=52s: Resolution — actors resume normal speed
-        logger.info("Phase 7: resolution — actors resume")
+        # t=52s: wrong-way vehicle turns around and exits east; queue releases.
+        logger.info("Phase 7: wrong-way recovery — turn around and release queue")
+        wrong_way = actors["wrong_way_car"]
+        wrong_way.waypoints = [
+            (wrong_way.lat, wrong_way.lon),
+            (_JCT_LAT + _m_to_dlat(6), _JCT_LON + _m_to_dlon(80)),
+            (_JCT_LAT + _m_to_dlat(6), _JCT_LON + _m_to_dlon(200)),
+        ]
+        wrong_way.wp_idx = 0
+        wrong_way.route_id = "recovery_east"
+        wrong_way.road_segment_id = "jct_recovery_east"
+        wrong_way.cruise_speed_mps = 4.0
+        wrong_way.set_target_speed(4.0)
         actors["ego_auto"].set_target_speed(5.5)
         actors["conflict_bus"].set_target_speed(6.0)
