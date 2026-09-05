@@ -97,10 +97,20 @@ class CooperativeDistributor:
                         triggered = True
                         break
 
+            # A reroute is only real when the path actually changed. A forced
+            # trigger (closure / critical hazard) whose alternatives were all
+            # worse or over capacity leaves the vehicle on its original path,
+            # so it must not be reported as a reroute — otherwise the UI shows
+            # a "rerouted" banner with identical old/new geometry and ETA.
+            path_changed = best_path != old_path
+            if not path_changed:
+                triggered = False
+                best_reason = "no_alternative_available" if force_trigger else ""
+
             new_eta = path_eta_s(self._graph, best_path)
 
             # Update load offsets for subsequent vehicles
-            if triggered and best_path is not old_path:
+            if triggered:
                 for _nid, edge_id in best_path:
                     if edge_id:
                         load_offsets[edge_id] = load_offsets.get(edge_id, 0) + 1

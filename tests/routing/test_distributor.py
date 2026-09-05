@@ -72,6 +72,46 @@ class TestCooperativeDistributor:
         assert r.old_eta_s > 0
         assert r.new_eta_s > 0
 
+    def test_no_reroute_reported_when_no_alternative_exists(self):
+        """A forced trigger with no viable detour must not report rerouted=True.
+
+        Regression: closure/critical-hazard set `triggered` before alternatives
+        were evaluated, so a vehicle with nowhere else to go was reported as
+        rerouted with identical old/new geometry and ETA.
+        """
+        from marga_routing.pathfinder import find_path, path_to_geometry
+
+        for e in self.graph.all_edges():
+            e.metrics.closure = True
+        path, _ = find_path(self.graph, "rail_crossing", "roundabout")
+        r = self.dist.plan(
+            {"v1": ("rail_crossing", "roundabout")},
+            current_paths={"v1": path},
+        )[0]
+
+        assert r.old_path == r.new_path
+        assert r.triggered is False
+        assert r.reason == "no_alternative_available"
+        assert r.old_eta_s == r.new_eta_s
+        assert path_to_geometry(self.graph, r.old_path) == path_to_geometry(self.graph, r.new_path)
+
+    def test_reroute_reported_only_with_changed_geometry(self):
+        """Whenever triggered is True the geometry and path must actually differ."""
+        from marga_routing.pathfinder import find_path, path_to_geometry
+
+        path, _ = find_path(self.graph, "rail_crossing", "roundabout")
+        for _, eid in path:
+            if eid:
+                self.graph.edge(eid).metrics.closure = True
+        r = self.dist.plan(
+            {"v1": ("rail_crossing", "roundabout")},
+            current_paths={"v1": path},
+        )[0]
+
+        assert r.triggered is True
+        assert r.old_path != r.new_path
+        assert path_to_geometry(self.graph, r.old_path) != path_to_geometry(self.graph, r.new_path)
+
     def test_load_balancing_across_vehicles(self):
         """When many vehicles request the same route, later ones should be steered differently."""
         vehicles = {f"v{i}": ("hub", "roundabout") for i in range(6)}
