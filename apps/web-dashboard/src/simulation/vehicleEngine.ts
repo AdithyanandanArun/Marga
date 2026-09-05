@@ -120,6 +120,7 @@ export class JunctionSimEngine {
    * phase actually shown to traffic. Negative values hold the current phase
    * longer; positive values bring the next phase forward. */
   private signalOffsetMs = 0;
+  private gateClearFraction = new Map<string, number>();
 
   setExternalBodies(provider: () => BodyPose[]): void { this.externalBodies = provider; }
   bodies(): BodyPose[] { return this.vehicles.map(v => this.pose(v)); }
@@ -153,6 +154,12 @@ export class JunctionSimEngine {
   /** Minimum heading difference for two vehicles to count as crossing rather
    * than following. Below this, car-following owns the spacing. */
   private static readonly CROSSING_CONFLICT_MIN_DEG = 30;
+  /** Space that must exist beyond the level crossing before a vehicle may
+   * enter it — one vehicle length plus a standing buffer. */
+  private static readonly CROSSING_EXIT_CLEARANCE_M = 9;
+  /** Safety factor on the estimated time to cross. Being wrong here means a
+   * vehicle stranded on a live track, so the estimate is deliberately pessimistic. */
+  private static readonly CROSSING_COMMIT_MARGIN = 2.4;
 
   constructor(opts: EngineOptions) {
     this.junction = opts.junction;
@@ -213,6 +220,18 @@ export class JunctionSimEngine {
         incidentReported: false,
         retireAtMs: null,
       };
+      // Initial placement is a random point on a route, which can land a
+      // stationary vehicle on the rails before the simulation has even
+      // started. Slide it past the box instead of rejecting the attempt, so a
+      // dense scenario still reaches its requested vehicle count.
+      const gate = this.junction.gate;
+      if (gate && candidate.route.control === 'GATE') {
+        const exitFraction = this.clearanceExitFraction(candidate.route, gate.clearanceRadiusM);
+        const stopFraction = candidate.route.stopLineFraction ?? 0;
+        if (candidate.progress > stopFraction && candidate.progress < exitFraction) {
+          candidate.progress = Math.min(0.99, exitFraction + 0.01);
+        }
+      }
       if (this.clearBody(this.pose(candidate), 1.5)) return candidate;
     }
     return null;
@@ -325,10 +344,110 @@ export class JunctionSimEngine {
     return this.clockMs % cycle < gate.openMs;
   }
 
+  /** The bell-and-amber period before the gate drops. Traffic that has not yet
+   * crossed the stop line holds here, so nothing commits to the track so late
+   * that it would still be on the rails when the gate is down. */
+  private gateClosingSoon(): boolean {
+    const gate = this.junction.gate;
+    if (!gate) return false;
+    const cycle = gate.openMs + gate.closedMs;
+    const intoCycle = this.clockMs % cycle;
+    return intoCycle < gate.openMs && intoCycle >= gate.openMs - gate.warningMs;
+  }
+
+  /** Fraction along a route at which it leaves the crossing box. Sampled once
+   * per route; the geometry never changes for a built junction. */
+  private clearanceExitFraction(route: RouteDef, radiusM: number): number {
+    const cached = this.gateClearFraction.get(route.id);
+    if (cached !== undefined) return cached;
+    const sample = samplePath(route.path, this.junction.center[1]);
+    const centerLat = this.junction.center[1];
+    let entered = false;
+    let exitAt = 1;
+    for (let f = 0; f <= 1; f += 0.002) {
+      const inside = distanceMeters(sample.pointAt(f), this.junction.center, centerLat) < radiusM;
+      if (inside) entered = true;
+      else if (entered) { exitAt = f; break; }
+    }
+    this.gateClearFraction.set(route.id, exitAt);
+    return exitAt;
+  }
+
+  /** Whether the vehicle is currently standing on, or crossing, the rails. */
+  private insideCrossingBox(v: SimVehicle): boolean {
+    const gate = this.junction.gate;
+    if (!gate || v.route.control !== 'GATE' || v.route.stopLineFraction === null) return false;
+    if (v.progress <= v.route.stopLineFraction) return false;
+    return v.progress < this.clearanceExitFraction(v.route, gate.clearanceRadiusM);
+  }
+
+  /** True while a vehicle is committed to the crossing and the gate is down or
+   * dropping. It is past the stop line, so holding it would strand it on the
+   * rails; the only safe action is to clear the box as fast as it can. */
+  private mustClearCrossing(v: SimVehicle): boolean {
+    if (!this.insideCrossingBox(v)) return false;
+    return !this.gateOpen() || this.gateClosingSoon();
+  }
+
+  /** Whether the far side of the crossing has room for this vehicle to come to
+   * rest clear of the rails.
+   *
+   * Speed alone cannot keep the track empty. A vehicle that enters on a green
+   * gate and then meets a queue on the far side is stopped *on* the rails by
+   * ordinary car-following, and no amount of urgency moves it. The only
+   * effective rule is the one real crossings use: never enter the box unless
+   * you can leave it.
+   */
+  private crossingExitClear(v: SimVehicle): boolean {
+    const gate = this.junction.gate;
+    if (!gate) return true;
+    const exitFraction = this.clearanceExitFraction(v.route, gate.clearanceRadiusM);
+    let nearestBeyondM = Infinity;
+    for (const other of this.vehicles) {
+      if (other === v || other.route.id !== v.route.id) continue;
+      if (other.progress <= v.progress) continue;
+      // Anything still inside the box means the exit is not yet free.
+      if (other.progress < exitFraction) return false;
+      nearestBeyondM = Math.min(
+        nearestBeyondM,
+        (other.progress - exitFraction) * other.sampled.totalLength,
+      );
+    }
+    return nearestBeyondM >= JunctionSimEngine.CROSSING_EXIT_CLEARANCE_M;
+  }
+
+  /** Whether this vehicle can be completely clear of the track before the gate
+   * drops.
+   *
+   * A fixed warning window is not enough on its own: a vehicle released from
+   * the back of a queue enters the box slowly, and 4 s of warning does not
+   * cover a truck accelerating over 25 m. Judging the actual commitment —
+   * distance remaining against time remaining — holds exactly those vehicles
+   * that would otherwise still be on the rails when the gate closes.
+   */
+  private canClearBeforeGate(v: SimVehicle): boolean {
+    const gate = this.junction.gate;
+    if (!gate) return true;
+    const cycle = gate.openMs + gate.closedMs;
+    const msUntilRed = gate.openMs - (this.clockMs % cycle);
+    if (msUntilRed <= 0) return false;
+    const exitFraction = this.clearanceExitFraction(v.route, gate.clearanceRadiusM);
+    const distanceM = Math.max(0, (exitFraction - v.progress) * v.sampled.totalLength);
+    // Judge on the speed it can realistically hold, not its current crawl, but
+    // keep a margin: this decides whether a vehicle ends up on a live railway.
+    const profile = SPEED_PROFILE[v.actorType];
+    const assumedSpeed = Math.max(profile.cruiseMin, v.speed);
+    return (distanceM / assumedSpeed) * 1000 * JunctionSimEngine.CROSSING_COMMIT_MARGIN <= msUntilRed;
+  }
+
   private requiresStopAtLine(v: SimVehicle): boolean {
     if (v.route.control === 'NONE' || v.route.stopLineFraction === null) return false;
     if (v.progress > v.route.stopLineFraction + 0.015) return false;
-    if (v.route.control === 'GATE') return !this.gateOpen();
+    // Three separate reasons to hold: the gate is down, this vehicle cannot
+    // clear the rails before it drops, or the far side has no room for it.
+    if (v.route.control === 'GATE') {
+      return !this.gateOpen() || !this.canClearBeforeGate(v) || !this.crossingExitClear(v);
+    }
     const phase = this.signalPhase();
     if (v.route.control === 'SIGNAL_GROUP_A') return phase !== 'A';
     if (v.route.control === 'SIGNAL_GROUP_B') return phase !== 'B';
@@ -562,11 +681,20 @@ export class JunctionSimEngine {
           < JunctionSimEngine.CONFLICT_ZONE_R_M;
         const secondInside = distanceMeters(this.positionFor(second), this.junction.center, centerLat)
           < JunctionSimEngine.CONFLICT_ZONE_R_M;
-        const firstYields = firstInside !== secondInside
-          ? !firstInside
-          : firstDistance !== secondDistance
-            ? firstDistance > secondDistance
-            : first.id > second.id;
+        // A vehicle on the rails outranks everything, whatever the gate is
+        // showing. Yielding is braking, and braking there means stopping on a
+        // live track — the one place a yield must never happen. Slowing down
+        // inside the box during green is what left vehicles still on it when
+        // the gate dropped.
+        const firstClearing = this.insideCrossingBox(first);
+        const secondClearing = this.insideCrossingBox(second);
+        const firstYields = firstClearing !== secondClearing
+          ? firstClearing === false
+          : firstInside !== secondInside
+            ? !firstInside
+            : firstDistance !== secondDistance
+              ? firstDistance > secondDistance
+              : first.id > second.id;
         const yielding = firstYields ? first : second;
         // Permit approach up to the conflict radius using the *actual* gap to
         // the other vehicle. Deriving this from the yielder's own speed makes
@@ -628,6 +756,15 @@ export class JunctionSimEngine {
         }
       }
       if (stopLimit === null && now >= v.nextDecisionAt - 1) v.desiredSpeed = v.targetSpeed;
+      // Committed to the crossing with the gate down or dropping: get off the
+      // rails. This overrides ordinary driver variability, which could
+      // otherwise roll a "brake" decision while the vehicle is on the track.
+      // Car-following still caps it below, so this cannot cause a rear-end.
+      if (this.mustClearCrossing(v)) {
+        v.targetSpeed = profile.burstMax;
+        v.state = 'BURST';
+        v.stopReason = null;
+      }
       if (v.retireAtMs !== null) v.targetSpeed = 0;
     }
 
@@ -758,12 +895,16 @@ export class JunctionSimEngine {
     }
     if (this.junction.gate) {
       const open = this.gateOpen();
+      const closing = this.gateClosingSoon();
       const gate = this.junction.gate;
       signals.push({
         signal_id: `${this.junctionId}-gate`,
         junction_id: this.junctionId,
         ts: nowIso,
-        phases: [{ movement_id: 'ROAD', state: open ? 'GREEN' : 'RED' }],
+        // The warning period is published as AMBER rather than folded into
+        // GREEN, so the dashboard shows the same state the drivers are acting
+        // on instead of a gate that appears open while traffic is stopping.
+        phases: [{ movement_id: 'ROAD', state: !open ? 'RED' : closing ? 'AMBER' : 'GREEN' }],
         controller_mode: 'FIXED',
         source: 'SIMULATION',
         confidence: 1,

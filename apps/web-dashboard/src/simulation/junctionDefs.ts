@@ -26,15 +26,45 @@ export interface JunctionDefinition {
   sleepers?: Point[][];
   routes: RouteDef[];
   signal?: { groupA: Point; groupB: Point; greenMs: number; allRedMs: number };
-  gate?: { position: Point; openMs: number; closedMs: number };
+  gate?: {
+    position: Point;
+    openMs: number;
+    closedMs: number;
+    /** Warning period before the gate drops, equivalent to the bell and amber
+     * light at a real level crossing. Traffic that has not yet crossed the stop
+     * line must hold, so nothing new commits to the track late. */
+    warningMs: number;
+    /** Distance from the junction centre that counts as being on the track. A
+     * vehicle inside this radius when the gate drops must clear it, never stop
+     * on it. */
+    clearanceRadiusM: number;
+  };
 }
 
 const ARM_LEN = 220;
 const JUNCTION_R = 16;
 const LANE_OFFSET = 3.2;
-const RING_R = 22;
-const ISLAND_R = 9;
+// Two concentric circulating lanes. Both radii stay inside the engine's 26 m
+// junction conflict zone so that circulating traffic always counts as "inside
+// the junction" and entering traffic (still out on a 220 m arm) counts as
+// approaching. That is what makes the give-way rule — circulating before
+// entering — actually discriminate here; on the old 22 m single ring the zone
+// was larger than the ring, so every vehicle read as inside and the rule was
+// inert.
+//
+// The 8 m radial gap exceeds the 6.5 m conflict distance, so an inner and an
+// outer vehicle running side by side are not read as a conflict.
+const OUTER_RING_R = 23;
+const INNER_RING_R = 15;
+const ISLAND_R = 10;
+/** Angular offset of an arm's entry and exit either side of its centreline.
+ * Wide enough to seat a splitter island between the two lanes. */
+const ARM_SPLIT_DEG = 12;
 const RAIL_ZONE = 6;
+/** Where traffic holds for a closed gate. This must sit clear of the crossing
+ * box (half-length RAIL_ZONE + 1.5 = 7.5 m), otherwise a vehicle that has
+ * correctly stopped for a red gate is still standing on the rails. */
+const RAIL_STOP_R = 15;
 
 const BED = [20, 24, 32, 255] as [number, number, number, number];
 const SURFACE = [54, 61, 72, 255] as [number, number, number, number];
@@ -189,45 +219,121 @@ function buildT(lat: number, lon: number): JunctionDefinition {
   };
 }
 
-/** Roundabout: four arms feed a clockwise ring (left-hand traffic); free-flowing, no stop line. */
+/**
+ * Roundabout: four arms feed a two-lane clockwise ring (left-hand traffic).
+ *
+ * The lane is decided at the entry from the chosen exit, which is the property
+ * that makes a turbo roundabout deadlock-resistant: no vehicle ever has to
+ * weave across another to reach its exit. The physical dividers of a true
+ * turbo are deliberately left out — the lane line is painted and crossable, so
+ * two-wheelers and autos can still filter between lanes, which is how an
+ * Indian city circle actually behaves. Route geometry never *requires* a
+ * crossing; driver behaviour may still produce one.
+ *
+ * The invariant that makes this work is that the outer lane always leaves at
+ * the next arm. Traffic staying on the ring is therefore in the inner lane and
+ * never meets entering or exiting traffic. A vehicle bound for a later arm
+ * changes lane exactly twice — inward before the next exit, outward after the
+ * last entry — and on that final stretch every other outer-lane vehicle shares
+ * its exit, so it is a merge rather than a crossing.
+ *
+ * Entry and exit are distinct points either side of each arm's centreline,
+ * with a splitter island between them. On the previous design both were the
+ * same coordinate, so entering and exiting traffic met head-on at every arm.
+ */
 function buildRoundabout(lat: number, lon: number): JunctionDefinition {
   const center: Point = localPoint(lat, lon, 0, 0);
   const angles = [0, 90, 180, 270];
   const armIds = ['N', 'E', 'S', 'W'];
-  const arms = angles.map((angle, index) => buildArm(lat, lon, armIds[index], angle, ARM_LEN, RING_R, LANE_OFFSET));
-  const ringPoint = (angle: number) => projectPoint(lat, lon, angle, RING_R);
+  const arms = angles.map((angle, index) => buildArm(lat, lon, armIds[index], angle, ARM_LEN, OUTER_RING_R, LANE_OFFSET));
+  const ringPoint = (angle: number, radius: number) => projectPoint(lat, lon, angle, radius);
+  // Circulation is clockwise, so bearing increases along the direction of
+  // travel. An arm's exit is therefore reached before its entry, which is why
+  // the exit sits at the lower bearing.
+  const entryAngle = (index: number) => angles[index] + ARM_SPLIT_DEG;
+  const exitAngle = (index: number) => angles[index] - ARM_SPLIT_DEG;
+
+  /** Arc from one bearing to the next going clockwise, interpolating the
+   * radius so a lane change is a smooth spiral rather than a step sideways. */
+  const spiral = (fromDeg: number, toDeg: number, fromR: number, toR: number): Point[] => {
+    const sweep = (((toDeg - fromDeg) % 360) + 360) % 360;
+    const steps = Math.max(3, Math.round(sweep / 8));
+    const points: Point[] = [];
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      points.push(ringPoint(fromDeg + sweep * t, fromR + (toR - fromR) * t));
+    }
+    return points;
+  };
 
   const routes: RouteDef[] = [];
   for (let i = 0; i < angles.length; i++) {
     for (let j = 0; j < angles.length; j++) {
       if (i === j) continue;
-      const entryAngle = angles[i];
-      const exitAngle = angles[j];
-      const sweep = ((exitAngle - entryAngle + 360) % 360) || 360;
-      const steps = Math.max(4, Math.round(sweep / 15));
-      const arc: Point[] = [];
-      for (let s = 0; s <= steps; s++) {
-        arc.push(ringPoint(entryAngle + (sweep * s) / steps));
+      const armsPassed = (j - i + angles.length) % angles.length;
+      const start = entryAngle(i);
+      const end = exitAngle(j);
+      let ring: Point[];
+      if (armsPassed === 1) {
+        // Leaving at the very next arm: stay in the outer lane throughout.
+        // This is the only traffic the outer lane ever carries.
+        ring = spiral(start, end, OUTER_RING_R, OUTER_RING_R);
+      } else {
+        // Dive inside before the next arm's exit, so this vehicle is already
+        // out of the outer lane by the time it passes traffic leaving there.
+        const dive = exitAngle((i + 1) % angles.length);
+        // Come back out only after the last arm's entry. Everything in the
+        // outer lane from here on is leaving at the same exit.
+        const merge = entryAngle((j + angles.length - 1) % angles.length);
+        ring = [
+          ...spiral(start, dive, OUTER_RING_R, INNER_RING_R),
+          ...spiral(dive, merge, INNER_RING_R, INNER_RING_R).slice(1),
+          ...spiral(merge, end, INNER_RING_R, OUTER_RING_R).slice(1),
+        ];
       }
       // The outer endpoints deliberately use the same lane offsets as every
       // connected road. A vehicle leaving the cross junction therefore enters
       // the roundabout on the exact same lane rather than teleporting to its
       // centreline.
-      const path = [arms[i].inboundFar, ringPoint(entryAngle), ...arc.slice(1), arms[j].outboundFar];
+      const path = [
+        arms[i].inboundFar, arms[i].inboundNear,
+        ...ring,
+        arms[j].outboundNear, arms[j].outboundFar,
+      ];
       routes.push({ id: `${armIds[i]}-${armIds[j]}-ring`, path, control: 'NONE', stopLineFraction: null });
     }
   }
 
+  // A splitter island per arm, seated between the entry and exit lanes. It is
+  // what physically separates the two on a real rotary, and it is why the
+  // entry and exit can no longer occupy the same point.
+  const splitters = angles.map((angle) => ({
+    polygon: [
+      projectPoint(lat, lon, angle, OUTER_RING_R + 2.0, 0),
+      projectPoint(lat, lon, angle, OUTER_RING_R + 7.0, 1.4),
+      projectPoint(lat, lon, angle, OUTER_RING_R + 30.0, 1.4),
+      projectPoint(lat, lon, angle, OUTER_RING_R + 30.0, -1.4),
+      projectPoint(lat, lon, angle, OUTER_RING_R + 7.0, -1.4),
+    ],
+    fill: ISLAND_FILL,
+    line: ISLAND_LINE,
+  }));
+
   return {
     type: 'ROUNDABOUT',
     label: 'Roundabout',
-    description: 'Free-flowing circulation, clockwise (left-hand traffic). No signal — speed is the only variable.',
+    description: 'Two-lane clockwise circulation (left-hand traffic). Lane is set at entry by the chosen exit, so through traffic never weaves across exiting traffic. The lane line is painted, not kerbed — bikes and autos can still filter.',
     center,
-    roads: arms.map((arm) => [arm.far, ringPoint(arm.angle)]),
-    laneMarkings: arms.map((arm) => [arm.far, ringPoint(arm.angle)]),
+    roads: arms.map((arm) => [arm.far, arm.near]),
+    laneMarkings: [
+      ...arms.map((arm) => [arm.far, arm.near]),
+      // Painted, crossable lane line between the two circulating lanes.
+      circle(lat, lon, (INNER_RING_R + OUTER_RING_R) / 2, 48),
+    ],
     areaPolygons: [
-      { polygon: circle(lat, lon, RING_R + 5.5, 40), fill: SURFACE, line: JUNCTION_LINE },
-      { polygon: circle(lat, lon, ISLAND_R, 28), fill: ISLAND_FILL, line: ISLAND_LINE },
+      { polygon: circle(lat, lon, OUTER_RING_R + 5.5, 48), fill: SURFACE, line: JUNCTION_LINE },
+      { polygon: circle(lat, lon, ISLAND_R, 32), fill: ISLAND_FILL, line: ISLAND_LINE },
+      ...splitters,
     ],
     routes,
   };
@@ -239,10 +345,21 @@ function buildRailwayCrossing(lat: number, lon: number): JunctionDefinition {
   const E = buildArm(lat, lon, 'E', 90, ARM_LEN, RAIL_ZONE, LANE_OFFSET);
   const W = buildArm(lat, lon, 'W', 270, ARM_LEN, RAIL_ZONE, LANE_OFFSET);
 
-  const routes: RouteDef[] = [
-    throughRoute(E, W, 'GATE', lat),
-    throughRoute(W, E, 'GATE', lat),
-  ];
+  // The stop line is an explicit node well short of the rails, rather than the
+  // generic throughRoute stop at the junction edge. That generic line sits
+  // 6 m from the centre, inside the 7.5 m crossing box, so queued traffic used
+  // to wait *on* the track.
+  const railRoute = (a: ArmGeom, b: ArmGeom): RouteDef => {
+    const hold = projectPoint(lat, lon, a.angle, RAIL_STOP_R, LANE_OFFSET);
+    const path = [a.inboundFar, hold, a.inboundNear, b.outboundNear, b.outboundFar];
+    return {
+      id: `${a.id}-${b.id}-through`,
+      path,
+      control: 'GATE',
+      stopLineFraction: fractionAtIndex(path, 1, lat),
+    };
+  };
+  const routes: RouteDef[] = [railRoute(E, W), railRoute(W, E)];
 
   const railHalfLen = 90;
   const rails: Point[][] = [
@@ -280,6 +397,10 @@ function buildRailwayCrossing(lat: number, lon: number): JunctionDefinition {
       position: localPoint(lat, lon, 8, 0),
       openMs: 35000,
       closedMs: 30000,
+      // Long enough for the slowest vehicle (a truck at ~1.1 m/s^2) to cover
+      // the 22.5 m from the stop line to the far edge of the box.
+      warningMs: 4000,
+      clearanceRadiusM: boxHalfLen + 2.5,
     },
   };
 }
