@@ -2,7 +2,7 @@
 Deterministic Bangalore junction mock simulation for the Marga scenario service.
 
 Models the Shivajinagar Junction resilience scenario:
-  - 5 waypoint-following actors on real junction approach roads
+  - 25 lane-constrained actors on the junction approach roads
   - 7-phase event sequence (normal → conflict → GPS/internet degradation → resolution)
   - Publishes canonical VehicleState, ConnectivityEvent, PositionQualityEvent to gateway
   - Fixed seed guarantees identical event sequences across runs
@@ -133,6 +133,8 @@ class _Actor:
     actor_type: str
     waypoints: list[tuple[float, float]]
     speed_mps: float
+    route_id: str = ""
+    initial_progress_m: float = 0.0
     target_speed: float = field(init=False)
     wp_idx: int = field(default=0, init=False)
     lat: float = field(init=False)
@@ -148,7 +150,26 @@ class _Actor:
             self.heading_deg = _bearing(self.lat, self.lon, *self.waypoints[1])
         else:
             self.heading_deg = 0.0
-        self.road_segment_id = f"jct_{self.actor_type}_{self.waypoints[0][0]:.4f}"
+        self.road_segment_id = f"jct_{self.route_id or self.actor_type}"
+        if self.initial_progress_m > 0:
+            self._seek(self.initial_progress_m)
+
+    def _seek(self, distance_m: float) -> None:
+        """Place a background vehicle at a deterministic point on its lane."""
+        while self.wp_idx < len(self.waypoints) - 1:
+            next_lat, next_lon = self.waypoints[self.wp_idx + 1]
+            segment = _haversine(self.lat, self.lon, next_lat, next_lon)
+            if distance_m <= segment:
+                ratio = distance_m / segment if segment else 0.0
+                self.lat += (next_lat - self.lat) * ratio
+                self.lon += (next_lon - self.lon) * ratio
+                self.heading_deg = _bearing(self.lat, self.lon, next_lat, next_lon)
+                return
+            distance_m -= segment
+            self.wp_idx += 1
+            self.lat, self.lon = next_lat, next_lon
+        self.wp_idx = 0
+        self.lat, self.lon = self.waypoints[0]
 
     def set_target_speed(self, speed_mps: float) -> None:
         self.target_speed = max(0.0, speed_mps)
@@ -167,7 +188,10 @@ class _Actor:
 
         # Advance toward the next waypoint
         if self.wp_idx >= len(self.waypoints) - 1:
-            return
+            # A deterministic loop keeps the junction populated for the full
+            # demo instead of leaving an empty intersection after one pass.
+            self.wp_idx = 0
+            self.lat, self.lon = self.waypoints[0]
 
         next_lat, next_lon = self.waypoints[self.wp_idx + 1]
         dist_remaining = _haversine(self.lat, self.lon, next_lat, next_lon)
@@ -253,38 +277,60 @@ async def _post_position_quality(
 
 
 def _build_actors() -> dict[str, _Actor]:
-    return {
+    actors = {
         "ego_auto": _Actor(
             actor_id="ego_auto",
             actor_type="auto_rickshaw",
             waypoints=_ROUTES["west_east"],
             speed_mps=5.5,
+            route_id="west_east",
         ),
         "conflict_bus": _Actor(
             actor_id="conflict_bus",
             actor_type="bus",
             waypoints=_ROUTES["south_north"],
             speed_mps=6.5,
+            route_id="south_north",
         ),
         "bg_car_1": _Actor(
             actor_id="bg_car_1",
             actor_type="car",
             waypoints=_ROUTES["north_south"],
             speed_mps=8.0,
+            route_id="north_south",
         ),
         "bg_car_2": _Actor(
             actor_id="bg_car_2",
             actor_type="car",
             waypoints=_ROUTES["east_west"],
             speed_mps=7.5,
+            route_id="east_west",
         ),
         "bg_moto": _Actor(
             actor_id="bg_moto",
             actor_type="motorcycle",
             waypoints=_ROUTES["west_east_moto"],
             speed_mps=9.5,
+            route_id="west_east_moto",
         ),
     }
+    # Four evenly spaced vehicles per lane form a believable mixed-traffic
+    # scene without turning the map into an unreadable 200-actor cloud. Their
+    # equal per-lane speeds preserve safe headway; all use the same waypoint
+    # and kinematic model as the foreground actors.
+    lane_order = ["west_east", "south_north", "north_south", "east_west", "west_east_moto"]
+    vehicle_types = ["car", "motorcycle", "auto_rickshaw", "car"]
+    for lane_index, route_id in enumerate(lane_order):
+        for slot, actor_type in enumerate(vehicle_types):
+            actors[f"traffic_{route_id}_{slot + 1}"] = _Actor(
+                actor_id=f"traffic_{route_id}_{slot + 1}",
+                actor_type=actor_type,
+                waypoints=_ROUTES[route_id],
+                speed_mps=4.2 + lane_index * 0.25,
+                route_id=route_id,
+                initial_progress_m=42.0 + slot * 68.0 + lane_index * 4.0,
+            )
+    return actors
 
 
 async def run_mock_simulation(

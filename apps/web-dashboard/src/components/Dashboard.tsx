@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, AlertTriangle, ChevronRight, Crosshair, Layers, Radio, Search, Settings, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
+import { Activity, AlertTriangle, Crosshair, Layers, Radio, Search, Settings, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
 import { MapView } from '../map/MapView';
 import { AlertPanel } from './AlertPanel';
 import { Inspector } from './Inspector';
@@ -10,6 +10,7 @@ import { WorldStream } from '../net/worldStream';
 import { useUIStore } from '../state/uiStore';
 import { useWorldStore } from '../state/worldStore';
 import type { RiskEvent, VehicleState } from '../types/canonical';
+import { selectPrimaryRisk } from '../utils/risk';
 
 type AdvancedTab = 'alerts' | 'inspector' | 'health' | 'layers';
 type Tone = 'good' | 'warning' | 'muted';
@@ -41,17 +42,10 @@ export function Dashboard() {
     return () => stream.disconnect();
   }, []);
 
-  const primaryRisk = useMemo(() => [...risks.values()].sort((a, b) => b.risk_score - a.risk_score || a.time_to_conflict_s - b.time_to_conflict_s)[0], [risks]);
+  const primaryRisk = useMemo(() => selectPrimaryRisk(risks.values()), [risks]);
   const riskActors = primaryRisk?.affected_actor_ids.map((id) => vehicles.get(id)).filter(Boolean) as VehicleState[] | undefined;
   const gpsUncertainty = riskActors?.length ? Math.max(...riskActors.map((actor) => actor.position_uncertainty_m)) : undefined;
   const directV2x = connectivity === 'DIRECT_ONLY' || connectivity === 'FULL';
-
-  const focusRisk = () => {
-    if (!primaryRisk) return;
-    selectEntity(primaryRisk.affected_actor_ids[0], 'vehicle');
-    setAdvancedTab('inspector');
-    setAdvancedOpen(true);
-  };
 
   return <main style={s.shell} aria-label="Marga V2X resilience dashboard">
     <header style={s.header}>
@@ -64,7 +58,7 @@ export function Dashboard() {
     </header>
     <section style={s.content}>
       <div style={s.mapArea}>
-        <MapView onEntityClick={(id, type) => { selectEntity(id, type); setAdvancedTab('inspector'); setAdvancedOpen(true); }} />
+        <MapView roadScene onEntityClick={(id, type) => { selectEntity(id, type); setAdvancedTab('inspector'); setAdvancedOpen(true); }} />
         <section style={s.resilienceRail} aria-label="Resilience status">
           <Status icon={<Wifi size={17} />} label="Internet" value={connectivity === 'DIRECT_ONLY' ? 'Offline' : gatewayConnected ? 'Online' : 'Reconnecting'} detail={connectivity === 'DIRECT_ONLY' ? 'Safety stays local' : 'Cloud path available'} tone={connectivity === 'DIRECT_ONLY' ? 'warning' : gatewayConnected ? 'good' : 'muted'} />
           <Status icon={<Crosshair size={17} />} label="Positioning" value={gpsUncertainty ? `GPS ±${Math.round(gpsUncertainty)} m` : 'Awaiting GPS'} detail={gpsUncertainty ? 'Confidence adjusts to uncertainty' : 'No active road user'} tone={gpsUncertainty && gpsUncertainty > 15 ? 'warning' : 'good'} />
@@ -75,8 +69,7 @@ export function Dashboard() {
           <h1 style={s.incidentTitle}>{riskHeadline(primaryRisk, vehicles)}</h1>
           {primaryRisk ? <>
             <div style={s.metricRow}><Metric label="Time to conflict" value={`${primaryRisk.time_to_conflict_s.toFixed(1)} s`} /><Metric label="Confidence" value={`${Math.round(primaryRisk.confidence * 100)}%`} /></div>
-            <p style={s.incidentExplanation}>The warning uses predicted paths and position uncertainty, then sends it over the available local safety link.</p>
-            <button style={s.focusButton} onClick={focusRisk}>Inspect evidence <ChevronRight size={16} /></button>
+            <p style={s.incidentExplanation}>Predicted paths overlap at the junction. Reduce speed before the conflict point; the warning stays available over the local safety link.</p>
           </> : <p style={s.incidentExplanation}>Marga is receiving only verified road telemetry. When a conflict is predicted, this panel will show one clear reason and the safety action.</p>}
         </section>
         <div style={s.mapCaption}><span><i style={s.legendDot} />Road users</span><span><i style={{ ...s.legendDot, background: 'var(--accent-red)' }} />Predicted conflict</span><span>{vehicles.size + pedestrians.size} tracked</span></div>
@@ -104,7 +97,7 @@ const s: Record<string, React.CSSProperties> = {
   headerStatus: { display: 'flex', alignItems: 'center', gap: 8 }, statusPill: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 9px', border: '1px solid var(--border-primary)', borderRadius: 6, background: 'var(--bg-secondary)', fontSize: 11, fontWeight: 650 }, advancedButton: { minHeight: 36, display: 'inline-flex', alignItems: 'center', gap: 7, padding: '0 11px', border: '1px solid var(--border-primary)', borderRadius: 6, background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12, fontWeight: 600 },
   content: { flex: 1, minHeight: 0, display: 'flex' }, mapArea: { flex: 1, minWidth: 0, position: 'relative', overflow: 'hidden' }, resilienceRail: { position: 'absolute', left: 16, top: 16, display: 'grid', gap: 8, zIndex: 3, width: 222 },
   statusCard: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: 12, border: '1px solid rgba(255,255,255,0.12)', borderRadius: 9, background: 'rgba(15,17,23,0.91)', boxShadow: 'var(--shadow-md)' }, cardIcon: { marginTop: 2 }, statusLabel: { color: 'var(--text-muted)', fontSize: 10, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase' }, statusValue: { display: 'block', marginTop: 3, fontSize: 13, color: 'var(--text-primary)' }, statusDetail: { marginTop: 2, fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.35 },
-  incidentCard: { position: 'absolute', right: 16, bottom: 24, zIndex: 3, width: 360, padding: 18, borderRadius: 12, background: 'rgba(15,17,23,0.94)', border: '1px solid rgba(255,255,255,0.14)', boxShadow: 'var(--shadow-lg)' }, incidentActive: { borderColor: 'rgba(248,113,113,0.72)', boxShadow: '0 8px 28px rgba(127,29,29,0.35)' }, eyebrow: { display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent-red)', fontSize: 11, fontWeight: 800, letterSpacing: 1 }, incidentTitle: { margin: '9px 0 12px', fontSize: 18, lineHeight: 1.25, textTransform: 'capitalize' }, metricRow: { display: 'flex', gap: 28, padding: '11px 0', borderTop: '1px solid var(--border-primary)', borderBottom: '1px solid var(--border-primary)' }, metricLabel: { color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.6 }, metricValue: { display: 'block', marginTop: 3, fontSize: 17, fontVariantNumeric: 'tabular-nums' }, incidentExplanation: { marginTop: 12, color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5 }, focusButton: { width: '100%', minHeight: 40, marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', borderRadius: 6, background: 'var(--accent-red)', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 750 },
+  incidentCard: { position: 'absolute', right: 16, bottom: 24, zIndex: 3, width: 360, padding: 18, borderRadius: 12, background: 'rgba(15,17,23,0.94)', border: '1px solid rgba(255,255,255,0.14)', boxShadow: 'var(--shadow-lg)' }, incidentActive: { borderColor: 'rgba(248,113,113,0.72)', boxShadow: '0 8px 28px rgba(127,29,29,0.35)' }, eyebrow: { display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent-red)', fontSize: 11, fontWeight: 800, letterSpacing: 1 }, incidentTitle: { margin: '9px 0 12px', fontSize: 18, lineHeight: 1.25, textTransform: 'capitalize' }, metricRow: { display: 'flex', gap: 28, padding: '11px 0', borderTop: '1px solid var(--border-primary)', borderBottom: '1px solid var(--border-primary)' }, metricLabel: { color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.6 }, metricValue: { display: 'block', marginTop: 3, fontSize: 17, fontVariantNumeric: 'tabular-nums' }, incidentExplanation: { marginTop: 12, color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5 },
   mapCaption: { position: 'absolute', left: 16, bottom: 15, zIndex: 3, display: 'flex', gap: 13, padding: '6px 9px', background: 'rgba(15,17,23,0.82)', borderRadius: 5, color: 'var(--text-secondary)', fontSize: 10 }, legendDot: { display: 'inline-block', width: 6, height: 6, marginRight: 5, borderRadius: '50%', background: 'var(--accent-blue)' },
   advancedPanel: { width: 360, flexShrink: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary)', borderLeft: '1px solid var(--border-primary)' }, advancedHeading: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: 16, borderBottom: '1px solid var(--border-primary)', fontSize: 14 }, advancedKicker: { display: 'block', marginBottom: 4, color: 'var(--text-muted)', fontSize: 10, letterSpacing: 0.9, fontWeight: 700 }, closeButton: { width: 32, height: 32, border: 'none', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 22 }, tabs: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: 8, borderBottom: '1px solid var(--border-primary)' }, tab: { minHeight: 36, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, border: '1px solid transparent', borderRadius: 5, background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 11, fontWeight: 600 }, tabActive: { background: 'var(--bg-tertiary)', borderColor: 'var(--border-primary)', color: 'var(--text-primary)' }, advancedContent: { flex: 1, overflow: 'auto', padding: 12 },
   footer: { minHeight: 30, display: 'flex', alignItems: 'center', gap: 14, padding: '0 16px', background: 'var(--bg-secondary)', borderTop: '1px solid var(--border-primary)', color: 'var(--text-muted)', fontSize: 10 }, footerLink: { color: 'var(--accent-cyan)', textDecoration: 'none', fontWeight: 700 },

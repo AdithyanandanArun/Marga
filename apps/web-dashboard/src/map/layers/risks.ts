@@ -1,5 +1,6 @@
 import { ScatterplotLayer, LineLayer, TextLayer } from '@deck.gl/layers';
 import type { RiskEvent, VehicleState } from '../../types/canonical';
+import { selectPrimaryRisk } from '../../utils/risk';
 
 const RISK_COLORS: Record<string, [number, number, number, number]> = {
   HIGH: [239, 68, 68, 150],
@@ -33,9 +34,7 @@ export function createRiskLayer(
 
   // The overview tells one safety story. Detailed multi-risk inspection is
   // intentionally kept in the advanced panel instead of drawing a web.
-  const primaryRisk = [...risks].sort(
-    (a, b) => b.risk_score - a.risk_score || a.time_to_conflict_s - b.time_to_conflict_s,
-  )[0];
+  const primaryRisk = selectPrimaryRisk(risks);
   for (const risk of primaryRisk ? [primaryRisk] : []) {
     if (risk.affected_actor_ids.length < 2) continue;
     const a = vehicles.get(risk.affected_actor_ids[0]);

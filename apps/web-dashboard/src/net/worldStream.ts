@@ -1,7 +1,7 @@
 import { useWorldStore } from '../state/worldStore';
 import { useAlertStore } from '../state/alertStore';
 import type { WorldDelta, AlertStreamMessage, StreamMessage } from '../types/events';
-import type { Alert, SystemMetrics } from '../types/canonical';
+import type { Alert, ConnectivityState, SystemMetrics } from '../types/canonical';
 
 interface StreamConfig {
   worldUrl?: string;
@@ -63,6 +63,8 @@ export class WorldStream {
         const msg: StreamMessage = JSON.parse(event.data);
         if ('upserts' in msg) {
           useWorldStore.getState().applyDelta(msg as WorldDelta);
+          const connectivity = (msg as WorldDelta & { connectivity?: { mode?: ConnectivityState } | null }).connectivity;
+          if (connectivity?.mode) useWorldStore.getState().setConnectivity(connectivity.mode);
         } else if ('metrics' in msg) {
           useWorldStore.getState().updateMetrics((msg as { metrics: SystemMetrics }).metrics);
         }

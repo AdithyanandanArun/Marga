@@ -9,18 +9,22 @@ import { createRiskLayer } from './layers/risks';
 import { createInfrastructureLayer } from './layers/infrastructure';
 import { createTrajectoriesLayer } from './layers/trajectories';
 import { createV2XLinksLayer } from './layers/v2xLinks';
+import { createJunctionRoadLayers } from './layers/junctionScene';
 import type { VehicleState } from '../types/canonical';
+import { selectPrimaryRisk } from '../utils/risk';
 
 const DARK_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 const LIGHT_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+const ROAD_SCENE_STYLE: maplibregl.StyleSpecification = { version: 8, sources: {}, layers: [{ id: 'scene-background', type: 'background', paint: { 'background-color': '#10141c' } }] };
 
 interface MapViewProps {
   onEntityClick?: (entityId: string, entityType: string) => void;
   onMapClick?: (lat: number, lon: number) => void;
   placementMode?: boolean;
+  roadScene?: boolean;
 }
 
-export function MapView({ onEntityClick, onMapClick, placementMode = false }: MapViewProps) {
+export function MapView({ onEntityClick, onMapClick, placementMode = false, roadScene = false }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const deckRef = useRef<Deck | null>(null);
@@ -60,9 +64,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
   // subsequent pan/zoom is always controlled by the judge/operator.
   useEffect(() => {
     if (hasAutoFramedRef.current || !mapLoaded || !mapRef.current || vehicles.size === 0) return;
-    const focusIds = [...risks.values()]
-      .sort((a, b) => b.risk_score - a.risk_score || a.time_to_conflict_s - b.time_to_conflict_s)[0]
-      ?.affected_actor_ids;
+    const focusIds = selectPrimaryRisk(risks.values())?.affected_actor_ids;
     const actors = focusIds
       ? focusIds.map((id) => vehicles.get(id)).filter((actor): actor is VehicleState => actor !== undefined)
       : Array.from(vehicles.values());
@@ -78,7 +80,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: darkMapStyle ? DARK_STYLE : LIGHT_STYLE,
+      style: roadScene ? ROAD_SCENE_STYLE : darkMapStyle ? DARK_STYLE : LIGHT_STYLE,
       center: [viewport.longitude, viewport.latitude],
       zoom: viewport.zoom,
       bearing: viewport.bearing,
@@ -166,6 +168,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
 
     const zoom = mapRef.current?.getZoom() ?? viewport.zoom;
     const layers = [
+      ...(roadScene ? createJunctionRoadLayers() : []),
       ...createActorLayer(
         Array.from(vehicles.values()),
         Array.from(pedestrians.values()),
@@ -189,7 +192,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false }: Ma
     deckRef.current.setProps({ layers });
   }, [vehicles, pedestrians, hazards, signals, roadEvents, dynamicActors, rsus, risks,
       showUncertainty, showTrajectories, showRiskZones, showV2XLinks, showSignals, showHazards, showRoadEvents, showRSUs,
-      selectedEntityId, viewport.zoom]);
+      selectedEntityId, viewport.zoom, roadScene]);
 
   useEffect(() => {
     const loop = () => {

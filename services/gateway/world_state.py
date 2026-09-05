@@ -104,12 +104,25 @@ def _vehicle_states() -> list[VehicleState]:
     return [VehicleState.model_validate(data) for (kind, _), data in _entities.items() if kind == "vehicle"]
 
 
-def _refresh_risks() -> list[dict[str, Any]]:
+def _refresh_risks() -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Replace transient trajectory risks with the current evaluation frame.
+
+    Risk events receive a fresh identifier on each evaluation. Keeping every
+    prior frame made long-running simulations grow an unbounded, stale risk
+    set and caused the dashboard to select conflicts that no longer existed.
+    """
+    deletes = [
+        {"entity_type": "risk", "entity_id": entity_id}
+        for (kind, entity_id) in tuple(_entities)
+        if kind == "risk"
+    ]
+    for deleted in deletes:
+        _entities.pop(("risk", deleted["entity_id"]), None)
     upserts: list[dict[str, Any]] = []
     for risk in _risk_engine.evaluate_all(_vehicle_states()):
         incident_traces.record_risk(risk)
         upserts.append(_store_model("risk", risk.risk_id, risk))
-    return upserts
+    return upserts, deletes
 
 
 async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
@@ -117,8 +130,9 @@ async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
     prior = VehicleState.model_validate(prior_data) if prior_data else None
     fused = _position_fusion.fuse_with_previous(prior, state)
     upserts = [_store_model("vehicle", fused.actor_id, fused)]
-    upserts.extend(_refresh_risks())
-    _notify(_world_delta("delta", upserts))
+    risk_upserts, risk_deletes = _refresh_risks()
+    upserts.extend(risk_upserts)
+    _notify(_world_delta("delta", upserts, risk_deletes))
     state_dict = upserts[0]["data"]
     try:
         from packages.event_bus.bus import get_event_bus
