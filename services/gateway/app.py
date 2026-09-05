@@ -182,6 +182,7 @@ _try_mount_router("services.hazards.marga_hazards.api", "router", "", "hazards")
 _try_mount_router("services.trust.marga_trust.api", "router", "", "trust")
 _try_mount_router("services.messaging.marga_messaging.api", "router", "", "messaging")
 _try_mount_router("services.alerts.marga_alerts.api", "router", "", "alerts")
+_try_mount_router("services.mobility_graph.api", "router", "", "mobility-graph")
 
 # Hrishi's safety service is a FastAPI application (rather than an APIRouter),
 # so mount it at an explicit namespace.  This leaves existing public gateway

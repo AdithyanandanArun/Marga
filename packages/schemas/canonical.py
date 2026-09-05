@@ -153,6 +153,12 @@ class PedestrianState(BaseModel):
     trust_context_id: str | None = None
 
 
+# ActorState is the canonical union consumed by world projections such as the
+# mobility graph. It replaces no existing wire type; vehicle and pedestrian
+# payloads remain individually discriminated at service boundaries.
+ActorState = VehicleState | PedestrianState
+
+
 class Hazard(BaseModel):
     """Canonical hazard entity with lifecycle and fusion state."""
 
@@ -170,6 +176,7 @@ class Hazard(BaseModel):
     source_ids: list[str] = Field(default_factory=list)
     evidence_count: int = Field(ge=0, default=0)
     state: HazardState = HazardState.CANDIDATE
+    road_segment_id: str | None = None
 
 
 class DynamicActorObservation(BaseModel):

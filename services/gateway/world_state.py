@@ -22,7 +22,12 @@ from packages.schemas.canonical import (
     VehicleState,
 )
 from packages.schemas.hazards import HazardObservation
-from services.integration.canonical_bridge import vehicle_from_adapter_event
+from services.integration.canonical_bridge import (
+    is_pedestrian_adapter_event,
+    pedestrian_from_adapter_event,
+    vehicle_from_adapter_event,
+)
+from services.mobility_graph import mobility_graph
 from services.policy_learning import ContextualSafetyBandit, PolicyContext
 from services.position import PositionFusionService, predict_trajectory
 from services.risk import RiskEngine
@@ -143,6 +148,7 @@ async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
         else _position_fusion.fuse_with_previous(prior, state)
     )
     upserts = [_store_model("vehicle", fused.actor_id, fused)]
+    mobility_graph.observe_vehicle(fused)
     risk_upserts, risk_deletes = _refresh_risks()
     upserts.extend(risk_upserts)
     _notify(_world_delta("delta", upserts, risk_deletes))
@@ -178,12 +184,14 @@ async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
 
 async def ingest_pedestrian_state(state: PedestrianState) -> dict[str, Any]:
     entity = _store_model("pedestrian", state.actor_id, state)
+    mobility_graph.observe_pedestrian(state)
     _notify(_world_delta("delta", [entity]))
     return {"entity": entity}
 
 
 async def ingest_signal_state(state: TrafficSignalState) -> dict[str, Any]:
     entity = _store_model("signal", state.signal_id, state)
+    mobility_graph.observe_signal(state)
     _notify(_world_delta("delta", [entity]))
     return {"entity": entity}
 
@@ -212,6 +220,7 @@ async def ingest_hazard_observation(observation: HazardObservation) -> dict[str,
         state=HazardState.CANDIDATE,
     )
     entity = _store_model("hazard", hazard.hazard_id, hazard)
+    mobility_graph.observe_hazard(hazard)
     _notify(_world_delta("delta", [entity]))
     return {"entity": entity}
 
@@ -268,7 +277,10 @@ async def ingest_legacy(req: IngestRequest) -> dict[str, int]:
     updated = errors = 0
     for event in req.events:
         try:
-            await ingest_vehicle_state(vehicle_from_adapter_event(event))
+            if is_pedestrian_adapter_event(event):
+                await ingest_pedestrian_state(pedestrian_from_adapter_event(event))
+            else:
+                await ingest_vehicle_state(vehicle_from_adapter_event(event))
             updated += 1
         except Exception as exc:
             logger.debug("skipping invalid adapter event: %s", exc)
@@ -314,6 +326,7 @@ async def ingest_position_quality(event: PositionQualityEvent) -> dict[str, Any]
     if actor is not None:
         actor["position_uncertainty_m"] = event.uncertainty_m
         _entities[("vehicle", event.actor_id)] = actor
+        mobility_graph.update_position_quality(event.actor_id, event.uncertainty_m, event.ts)
         _notify(_world_delta("delta", [_entity("vehicle", event.actor_id, actor)]))
     logger.info("position_quality: actor=%s uncertainty=%.1fm", event.actor_id, event.uncertainty_m)
     return {"event_id": event.event_id, "actor_id": event.actor_id, "uncertainty_m": event.uncertainty_m}

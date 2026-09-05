@@ -39,6 +39,12 @@ class VehicleState(BaseModel):
     acceleration_mps2: Optional[float] = Field(
         None, description="Longitudinal acceleration in m/s²"
     )
+    road_segment_id: str | None = Field(
+        None, description="Canonical OSM/SUMO edge ID after adapter normalization"
+    )
+    lane_id: str | None = Field(
+        None, description="Canonical lane ID after adapter normalization"
+    )
     vehicle_type: VehicleType = Field(..., description="Vehicle class")
     source: str = Field(
         ...,
@@ -75,6 +81,9 @@ class PedestrianState(BaseModel):
     speed_mps: float = Field(..., ge=0.0, description="Speed in metres per second")
     heading_deg: float = Field(
         ..., description="Heading in degrees clockwise from true north (0-360)"
+    )
+    road_segment_id: str | None = Field(
+        None, description="Canonical OSM/SUMO edge ID after adapter normalization"
     )
     source: str = Field(..., description="Data origin identifier")
     scenario_run_id: Optional[str] = Field(None, description="Simulation scenario run identifier")

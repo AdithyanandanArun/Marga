@@ -158,6 +158,8 @@ class SumoLibsumoAdapter:
                     "angle": libsumo.vehicle.getAngle(vid),
                     "type_id": libsumo.vehicle.getTypeID(vid),
                     "acceleration": libsumo.vehicle.getAcceleration(vid),
+                    "edge_id": libsumo.vehicle.getRoadID(vid),
+                    "lane_id": libsumo.vehicle.getLaneID(vid),
                 }
                 yield self._normalizer.normalize_vehicle_state(
                     vehicle_id=vid,
@@ -178,6 +180,7 @@ class SumoLibsumoAdapter:
                     "y": y,
                     "speed": libsumo.person.getSpeed(pid),
                     "angle": libsumo.person.getAngle(pid),
+                    "edge_id": libsumo.person.getRoadID(pid),
                 }
                 yield self._normalizer.normalize_pedestrian_state(
                     ped_id=pid,

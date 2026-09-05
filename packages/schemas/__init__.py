@@ -1,6 +1,7 @@
 """Marga canonical schemas — public re-exports."""
 
 from packages.schemas.canonical import (
+    ActorState,
     ActorType,
     AlertLevel,
     AlertStatus,
@@ -26,6 +27,8 @@ from .common import Position, PositionEstimate, SourceMetadata
 from .events import (
     ACTOR_STATE_UPDATED,
     ALERT_ISSUED,
+    GRAPH_EDGE_UPDATED,
+    GRAPH_INTERSECTION_UPDATED,
     HAZARD_OBSERVED,
     HAZARD_UPDATED,
     INFRASTRUCTURE_SIGNAL_UPDATED,
@@ -39,10 +42,12 @@ from .events import (
 )
 from .hazards import HazardObservation
 from .infrastructure import InfrastructureState, InfrastructureType, SignalPhase
+from .mobility_graph import GraphEdgeDefinition, MobilityEdgeState, MobilityIntersectionState, RollingEdgeMetrics
 from .road import RoadCondition, RoadEvent, RoadState
 
 __all__ = [
     "ActorType",
+    "ActorState",
     "AlertLevel",
     "AlertStatus",
     "EventEnvelope",
@@ -88,5 +93,12 @@ __all__ = [
     "ROAD_STATE_UPDATED",
     "SCENARIO_STARTED",
     "SCENARIO_STOPPED",
+    "GRAPH_EDGE_UPDATED",
+    "GRAPH_INTERSECTION_UPDATED",
     "CanonicalEvent",
+    # mobility graph
+    "GraphEdgeDefinition",
+    "MobilityEdgeState",
+    "MobilityIntersectionState",
+    "RollingEdgeMetrics",
 ]

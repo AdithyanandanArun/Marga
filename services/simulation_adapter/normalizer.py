@@ -261,6 +261,8 @@ class SumoNormalizer:
             speed_mps=raw["speed"],  # SUMO speed is already in m/s
             heading_deg=heading,
             acceleration_mps2=raw.get("acceleration"),
+            road_segment_id=raw.get("edge_id"),
+            lane_id=raw.get("lane_id"),
             vehicle_type=vehicle_type,
             source=source,
             scenario_run_id=scenario_run_id,
@@ -303,6 +305,7 @@ class SumoNormalizer:
             position=position,
             speed_mps=raw["speed"],
             heading_deg=heading,
+            road_segment_id=raw.get("edge_id"),
             source=source,
             scenario_run_id=scenario_run_id,
         )

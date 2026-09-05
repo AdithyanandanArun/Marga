@@ -21,6 +21,8 @@ TRUST_ASSESSMENT_UPDATED = "trust.assessment.updated"
 RISK_DETECTED = "risk.detected"
 ALERT_ISSUED = "alert.issued"
 ROAD_STATE_UPDATED = "road.state.updated"
+GRAPH_EDGE_UPDATED = "graph.edge.updated"
+GRAPH_INTERSECTION_UPDATED = "graph.intersection.updated"
 SCENARIO_STARTED = "scenario.started"
 SCENARIO_STOPPED = "scenario.stopped"
 

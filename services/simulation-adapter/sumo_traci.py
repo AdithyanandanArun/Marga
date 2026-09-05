@@ -164,6 +164,8 @@ class SumoTraciAdapter:
                     "angle": traci.vehicle.getAngle(vid),
                     "type_id": traci.vehicle.getTypeID(vid),
                     "acceleration": traci.vehicle.getAcceleration(vid),
+                    "edge_id": traci.vehicle.getRoadID(vid),
+                    "lane_id": traci.vehicle.getLaneID(vid),
                 }
                 yield self._normalizer.normalize_vehicle_state(
                     vehicle_id=vid,
@@ -184,6 +186,7 @@ class SumoTraciAdapter:
                     "y": y,
                     "speed": traci.person.getSpeed(pid),
                     "angle": traci.person.getAngle(pid),
+                    "edge_id": traci.person.getRoadID(pid),
                 }
                 yield self._normalizer.normalize_pedestrian_state(
                     ped_id=pid,
