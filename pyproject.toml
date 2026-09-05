@@ -95,6 +95,7 @@ pythonpath = [
     "services/messaging",
     "services/alerts",
     "services/signal-rl",
+    "services/routing",
 ]
 
 [tool.ruff]
