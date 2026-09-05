@@ -39,7 +39,10 @@ export function SimulationStudio() {
 
   const [vehicleCount, setVehicleCount] = useState(24);
   const [chaos, setChaos] = useState(0.5);
-  const [playing, setPlaying] = useState(true);
+  // Seeded from the shared runtime rather than assumed: pausing here and
+  // navigating away leaves the singleton paused, so a fresh `true` would show
+  // a "Pause" button over a world that is standing still.
+  const [playing, setPlaying] = useState(() => !networkTelemetry.isPaused());
   const [feedState, setFeedState] = useState<'connecting' | 'live' | 'offline'>('connecting');
 
   useEffect(() => {
@@ -89,9 +92,13 @@ export function SimulationStudio() {
     const releaseTelemetry = networkTelemetry.retain(onFrame, setFeedState);
 
     return () => {
-      releaseTelemetry();
-      deck.finalize();
-      map.remove();
+      // Tearing down a WebGL context that has not finished initialising can
+      // throw. If it escapes the cleanup, React abandons the rest of the
+      // teardown and the remount never runs, so the map never appears and the
+      // telemetry loop is left released and stopped.
+      try { releaseTelemetry(); } catch { /* already released */ }
+      try { deck.finalize(); } catch { /* context already lost */ }
+      try { map.remove(); } catch { /* map already disposed */ }
     };
     // Scene is intentionally initialized once; junction/vehicle/chaos changes are applied imperatively below.
     // eslint-disable-next-line react-hooks/exhaustive-deps

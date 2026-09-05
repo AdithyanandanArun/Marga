@@ -50,8 +50,15 @@ class NetworkTelemetryRuntime {
       onStatus(this.feedState);
     }
     this.ensureRunning();
+    let released = false;
     return () => {
-      this.references -= 1;
+      // A release must be idempotent. React can invoke an effect cleanup more
+      // than once; a second decrement would drive the count negative and the
+      // matching retain would then never bring it back above zero, leaving the
+      // world permanently frozen.
+      if (released) return;
+      released = true;
+      this.references = Math.max(0, this.references - 1);
       if (onFrame) this.subscribers.delete(onFrame);
       if (onStatus) this.statusSubscribers.delete(onStatus);
       if (this.references <= 0 && this.frameHandle !== null) {
@@ -65,6 +72,9 @@ class NetworkTelemetryRuntime {
   setVehicleCount(count: number): void { this.engine.setVehicleCount(count); }
   setChaos(chaos: number): void { this.engine.setChaos(chaos); }
   setPaused(paused: boolean): void { this.paused = paused; }
+  /** Pause lives on the shared runtime, not in a view. A remounted page must
+   * read it back, or its button claims the world is running while it is not. */
+  isPaused(): boolean { return this.paused; }
 
   reset(count: number): void {
     this.engine.reset(count);
@@ -76,24 +86,38 @@ class NetworkTelemetryRuntime {
   private ensureRunning(): void {
     if (this.frameHandle !== null) return;
     const tick = (timestamp: number) => {
-      const dt = this.lastTick ? Math.min(200, timestamp - this.lastTick) : 16;
-      this.lastTick = timestamp;
-      const frame = this.engine.tick(this.paused ? 0 : dt * SIMULATION_TIME_SCALE);
-      this.subscribers.forEach((subscriber) => subscriber(frame));
-      if (timestamp - this.lastPublish >= TELEMETRY_INTERVAL_MS && !this.publishing) {
-        this.lastPublish = timestamp;
-        this.publishing = true;
-        void publishFrame(frame.vehicles, frame.signals, frame.incidents, frame.despawnedActorIds)
-          .then(() => this.setFeedState('live'))
-          .catch(() => this.setFeedState('offline'))
-          .finally(() => { this.publishing = false; });
+      // The next frame is scheduled in `finally`, so the world keeps moving
+      // even if one tick throws. Rescheduling at the end of the body instead
+      // means a single failure — a renderer disposed mid-frame, one bad
+      // subscriber — permanently kills the only animation loop in the app,
+      // and `frameHandle` still holds the spent id so `ensureRunning` refuses
+      // to restart it. That is unrecoverable without a page reload.
+      try {
+        const dt = this.lastTick ? Math.min(200, timestamp - this.lastTick) : 16;
+        this.lastTick = timestamp;
+        const frame = this.engine.tick(this.paused ? 0 : dt * SIMULATION_TIME_SCALE);
+        this.subscribers.forEach((subscriber) => {
+          // One subscriber's failure must not stop the others from rendering.
+          try { subscriber(frame); } catch { /* renderer detached or failed */ }
+        });
+        if (timestamp - this.lastPublish >= TELEMETRY_INTERVAL_MS && !this.publishing) {
+          this.lastPublish = timestamp;
+          this.publishing = true;
+          void publishFrame(frame.vehicles, frame.signals, frame.incidents, frame.despawnedActorIds)
+            .then(() => this.setFeedState('live'))
+            .catch(() => this.setFeedState('offline'))
+            .finally(() => { this.publishing = false; });
+        }
+        if (timestamp - this.lastSignalPoll >= SIGNAL_COMMAND_INTERVAL_MS && !this.pollingSignals) {
+          this.lastSignalPoll = timestamp;
+          this.pollingSignals = true;
+          void this.syncSignalControl().finally(() => { this.pollingSignals = false; });
+        }
+      } catch {
+        // Movement is the last thing that should stop; drop the frame and go on.
+      } finally {
+        this.frameHandle = this.references > 0 ? requestAnimationFrame(tick) : null;
       }
-      if (timestamp - this.lastSignalPoll >= SIGNAL_COMMAND_INTERVAL_MS && !this.pollingSignals) {
-        this.lastSignalPoll = timestamp;
-        this.pollingSignals = true;
-        void this.syncSignalControl().finally(() => { this.pollingSignals = false; });
-      }
-      this.frameHandle = requestAnimationFrame(tick);
     };
     this.frameHandle = requestAnimationFrame(tick);
   }

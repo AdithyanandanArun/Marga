@@ -169,9 +169,11 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
     deckRef.current = deck;
 
     return () => {
+      // See SimulationStudio: a throwing GL teardown must not escape cleanup,
+      // or React skips the remount and the dashboard renders without a map.
       cancelAnimationFrame(animRef.current);
-      deck.finalize();
-      map.remove();
+      try { deck.finalize(); } catch { /* context already lost */ }
+      try { map.remove(); } catch { /* map already disposed */ }
     };
   }, []);
 
@@ -215,7 +217,9 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
 
   useEffect(() => {
     const loop = () => {
-      updateLayers();
+      // Reschedule unconditionally: a layer that fails to build for one frame
+      // must not stop the map from redrawing on every later frame.
+      try { updateLayers(); } catch { /* skip this frame's layer rebuild */ }
       animRef.current = requestAnimationFrame(loop);
     };
     animRef.current = requestAnimationFrame(loop);
