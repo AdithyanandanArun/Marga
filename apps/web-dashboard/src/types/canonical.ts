@@ -93,13 +93,17 @@ export interface TrafficSignalPhase {
 
 export interface TrafficSignalState {
   signal_id: string;
-  junction_id: string;
+  junction_id?: string;
+  intersection_id?: string;
   ts: string;
-  phases: TrafficSignalPhase[];
-  controller_mode: SignalControllerMode;
+  phases?: TrafficSignalPhase[];
+  current_phase?: string;
+  phase_remaining_s?: number | null;
+  movements?: Record<string, SignalPhaseState>;
+  controller_mode?: SignalControllerMode;
   source: ActorSource;
   confidence: number;
-  position?: { lat: number; lon: number };
+  position: { lat: number; lon: number };
 }
 
 export interface RoadEvent {

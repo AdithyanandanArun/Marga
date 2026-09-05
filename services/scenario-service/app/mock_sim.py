@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from services.policy_learning import AdaptiveSignalBandit
+
 if TYPE_CHECKING:
     from .schemas import ScenarioDefinition
 
@@ -136,6 +138,7 @@ class _Actor:
     route_id: str = ""
     initial_progress_m: float = 0.0
     target_speed: float = field(init=False)
+    cruise_speed_mps: float = field(init=False)
     wp_idx: int = field(default=0, init=False)
     lat: float = field(init=False)
     lon: float = field(init=False)
@@ -145,6 +148,7 @@ class _Actor:
 
     def __post_init__(self) -> None:
         self.target_speed = self.speed_mps
+        self.cruise_speed_mps = self.speed_mps
         self.lat, self.lon = self.waypoints[0]
         if len(self.waypoints) > 1:
             self.heading_deg = _bearing(self.lat, self.lon, *self.waypoints[1])
@@ -234,6 +238,80 @@ _PHASE_TIMES = [20.0, 25.0, 28.0, 32.0, 40.0, 45.0, 52.0]
 
 _GPS_DEGRADED_M = 25.0
 _GPS_NORMAL_M = 4.0
+
+
+class _AdaptiveSignalController:
+    """Two-phase junction controller with bounded bandit-selected green time."""
+
+    def __init__(self) -> None:
+        self.bandit = AdaptiveSignalBandit()
+        self.movement = "EW"
+        self.remaining_s = 25.0
+        self.last_queue = 0
+        self.last_duration = 25
+        self.decision_count = 0
+
+    def is_green(self, route_id: str) -> bool:
+        movement = "EW" if route_id in {"west_east", "east_west", "west_east_moto"} else "NS"
+        return movement == self.movement
+
+    def step(self, dt: float, actors: dict[str, _Actor]) -> None:
+        self.remaining_s -= dt
+        if self.remaining_s > 0:
+            return
+        served = sum(1 for actor in actors.values() if actor.actor_id.startswith("traffic_") and self.is_green(actor.route_id) and actor.wp_idx >= 2)
+        self.bandit.record_outcome(
+            ew_queue=self._queue_size(actors, "EW"), ns_queue=self._queue_size(actors, "NS"),
+            duration_s=self.last_duration, reward=1.0 if served >= self.last_queue else 0.0,
+        )
+        self.movement = "NS" if self.movement == "EW" else "EW"
+        ew_queue, ns_queue = self._queue_size(actors, "EW"), self._queue_size(actors, "NS")
+        choice = self.bandit.choose_green(
+            ew_queue=ew_queue, ns_queue=ns_queue, movement=self.movement, decision_key=str(self.decision_count),
+        )
+        self.last_duration = int(choice["duration_s"])
+        self.remaining_s = float(self.last_duration)
+        self.last_queue = ew_queue if self.movement == "EW" else ns_queue
+        self.decision_count += 1
+
+    @staticmethod
+    def _queue_size(actors: dict[str, _Actor], movement: str) -> int:
+        return sum(
+            1 for actor in actors.values()
+            if actor.actor_id.startswith("traffic_")
+            and ("EW" if actor.route_id in {"west_east", "east_west", "west_east_moto"} else "NS") == movement
+            and actor.wp_idx <= 1
+        )
+
+
+def _apply_signal_compliance(actors: dict[str, _Actor], signals: _AdaptiveSignalController) -> None:
+    """Queue background traffic at a red approach; foreground conflict stays observable."""
+    for actor in actors.values():
+        if not actor.actor_id.startswith("traffic_"):
+            continue
+        approaching = actor.wp_idx <= 1 and _haversine(actor.lat, actor.lon, _JCT_LAT, _JCT_LON) < 45
+        actor.set_target_speed(0.0 if approaching and not signals.is_green(actor.route_id) else actor.cruise_speed_mps)
+
+
+async def _post_signal_states(client: Any, gateway_url: str, signals: _AdaptiveSignalController) -> None:
+    if not client:
+        return
+    now = datetime.now(UTC).isoformat()
+    entries = [
+        ("shivajinagar-ew", "EW", _JCT_LAT + _m_to_dlat(18), _JCT_LON - _m_to_dlon(18)),
+        ("shivajinagar-ns", "NS", _JCT_LAT - _m_to_dlat(18), _JCT_LON + _m_to_dlon(18)),
+    ]
+    for signal_id, movement, lat, lon in entries:
+        phase = "GREEN" if signals.movement == movement else "RED"
+        payload = {
+            "signal_id": signal_id, "intersection_id": "shivajinagar-junction", "ts": now,
+            "position": {"lat": lat, "lon": lon}, "current_phase": f"{movement}_{phase}",
+            "phase_remaining_s": round(signals.remaining_s, 1), "movements": {movement: phase}, "source": "SIMULATION",
+        }
+        try:
+            await client.post(f"{gateway_url}/v1/ingest/signal-state", json=payload)
+        except Exception as exc:
+            logger.debug("signal-state post failed: %s", exc)
 
 
 async def _post_connectivity(
@@ -359,6 +437,8 @@ async def run_mock_simulation(
     dt = 1.0 / tick_hz
     sim_time = 0.0
     phases_fired: set[int] = set()
+    signals = _AdaptiveSignalController()
+    next_signal_publish_s = 0.0
 
     logger.info(
         "mock_sim started: run=%s scenario=%r actors=%d phases=7",
@@ -375,8 +455,14 @@ async def run_mock_simulation(
                     await _apply_phase(i, actors, all_ids, client, gateway_url)
 
             # --- Tick all actors ---
+            signals.step(dt, actors)
+            _apply_signal_compliance(actors, signals)
             for actor in actors.values():
                 actor.step(dt)
+
+            if sim_time >= next_signal_publish_s:
+                await _post_signal_states(client, gateway_url, signals)
+                next_signal_publish_s += 1.0
 
             # --- Publish vehicle states ---
             events: list[dict[str, Any]] = []

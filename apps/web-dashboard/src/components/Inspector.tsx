@@ -1,7 +1,7 @@
 import { useUIStore } from '../state/uiStore';
 import { useWorldStore } from '../state/worldStore';
 import { formatSpeed, formatCoord, confidenceLabel, timeAgo, actorTypeIcon, headingToCardinal } from '../utils/geo';
-import { X, Navigation, Gauge, MapPin, Shield, Radio, Eye } from 'lucide-react';
+import { X, Navigation, Gauge, MapPin, Shield, Radio, Eye, TrafficCone } from 'lucide-react';
 import type { VehicleState, Hazard, TrafficSignalState, RSUState } from '../types/canonical';
 
 export function Inspector() {
@@ -152,10 +152,11 @@ function HazardInspector({ hazard: h, onClose }: { hazard: Hazard; onClose: () =
 
 function SignalInspector({ signal: s, onClose }: { signal: TrafficSignalState; onClose: () => void }) {
   const phaseColors: Record<string, string> = { RED: '#ef4444', AMBER: '#eab308', GREEN: '#22c55e' };
+  const phases = s.phases ?? Object.entries(s.movements ?? {}).map(([movement_id, state]) => ({ movement_id, state }));
   return (
     <div>
       <div style={styles.inspectorHeader}>
-        <span style={{ fontSize: 20 }}>{'🚦'}</span>
+        <TrafficCone size={20} style={{ color: 'var(--accent-yellow)' }} />
         <div>
           <div style={styles.entityId}>{s.signal_id}</div>
           <div style={styles.entityType}>Traffic Signal</div>
@@ -165,7 +166,7 @@ function SignalInspector({ signal: s, onClose }: { signal: TrafficSignalState; o
 
       <div style={styles.section}>
         <div style={styles.sectionTitle}>Phases</div>
-        {s.phases.map((p) => (
+        {phases.map((p) => (
           <div key={p.movement_id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <div style={{ width: 12, height: 12, borderRadius: '50%', background: phaseColors[p.state] ?? '#888' }} />
             <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{p.movement_id}</span>
@@ -176,8 +177,8 @@ function SignalInspector({ signal: s, onClose }: { signal: TrafficSignalState; o
 
       <div style={styles.section}>
         <div style={styles.statGrid}>
-          <StatItem label="Junction" value={s.junction_id} />
-          <StatItem label="Mode" value={s.controller_mode} />
+          <StatItem label="Junction" value={s.intersection_id ?? s.junction_id ?? '—'} />
+          <StatItem label="Mode" value={s.controller_mode ?? 'ACTUATED'} />
           <StatItem label="Confidence" value={`${(s.confidence * 100).toFixed(0)}%`} />
         </div>
       </div>

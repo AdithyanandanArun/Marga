@@ -1,4 +1,4 @@
-from services.policy_learning import ContextualSafetyBandit, PolicyContext
+from services.policy_learning import AdaptiveSignalBandit, ContextualSafetyBandit, PolicyContext
 
 
 def _context(**overrides: object) -> PolicyContext:
@@ -31,3 +31,9 @@ def test_feedback_updates_contextual_posterior() -> None:
     result = policy.record_feedback(_context(), "EARLY_WARNING", 1.0)
     assert result["alpha"] == 2.0
     assert result["beta"] == 1.0
+
+
+def test_signal_bandit_only_returns_prevalidated_green_durations() -> None:
+    choice = AdaptiveSignalBandit().choose_green(ew_queue=14, ns_queue=8, movement="EW", decision_key="cycle-1")
+    assert choice["duration_s"] in {18, 25, 32}
+    assert choice["bounded"] is True

@@ -16,6 +16,13 @@ const ROAD_EVENT_COLORS: Record<string, [number, number, number]> = {
   CONSTRUCTION: [251, 191, 36],
 };
 
+function activePhase(signal: TrafficSignalState): string {
+  if (signal.current_phase?.includes('GREEN')) return 'GREEN';
+  if (signal.current_phase?.includes('AMBER')) return 'AMBER';
+  if (signal.movements) return Object.values(signal.movements).includes('GREEN') ? 'GREEN' : 'RED';
+  return signal.phases?.[0]?.state ?? 'RED';
+}
+
 export function createInfrastructureLayer(
   signals: TrafficSignalState[],
   roadEvents: RoadEvent[],
@@ -25,7 +32,7 @@ export function createInfrastructureLayer(
   const layers = [];
 
   if (signals.length > 0 && zoom >= 12) {
-    const signalsWithPos = signals.filter((s) => s.position);
+    const signalsWithPos = signals;
 
     if (signalsWithPos.length > 0) {
       const dotRadius = zoom > 15 ? 12 : zoom > 13 ? 9 : 7;
@@ -35,7 +42,7 @@ export function createInfrastructureLayer(
         new ScatterplotLayer({
           id: 'signal-housing',
           data: signalsWithPos,
-          getPosition: (d: TrafficSignalState) => [d.position!.lon, d.position!.lat],
+          getPosition: (d: TrafficSignalState) => [d.position.lon, d.position.lat],
           getRadius: dotRadius + 3,
           getFillColor: [30, 30, 30, 220],
           getLineColor: [80, 80, 80, 180],
@@ -52,10 +59,10 @@ export function createInfrastructureLayer(
         new ScatterplotLayer({
           id: 'signal-lens',
           data: signalsWithPos,
-          getPosition: (d: TrafficSignalState) => [d.position!.lon, d.position!.lat],
+          getPosition: (d: TrafficSignalState) => [d.position.lon, d.position.lat],
           getRadius: dotRadius,
           getFillColor: (d: TrafficSignalState) => {
-            const phase = d.phases[0]?.state ?? 'RED';
+            const phase = activePhase(d);
             return [...(SIGNAL_COLORS[phase] ?? SIGNAL_COLORS.RED), 255] as [number, number, number, number];
           },
           getLineColor: [255, 255, 255, 60],
@@ -65,7 +72,7 @@ export function createInfrastructureLayer(
           pickable: true,
           radiusUnits: 'pixels',
           updateTriggers: {
-            getFillColor: signalsWithPos.map((s) => s.phases[0]?.state),
+            getFillColor: signalsWithPos.map(activePhase),
           },
         }),
       );
@@ -76,8 +83,8 @@ export function createInfrastructureLayer(
           new TextLayer({
             id: 'signal-labels',
             data: signalsWithPos,
-            getPosition: (d: TrafficSignalState) => [d.position!.lon, d.position!.lat],
-            getText: (d: TrafficSignalState) => d.phases[0]?.state?.charAt(0) ?? 'R',
+            getPosition: (d: TrafficSignalState) => [d.position.lon, d.position.lat],
+            getText: (d: TrafficSignalState) => activePhase(d).charAt(0),
             getSize: 11,
             getColor: [255, 255, 255, 230],
             getTextAnchor: 'middle',

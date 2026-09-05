@@ -18,6 +18,7 @@ from packages.schemas.canonical import (
     HazardType,
     PedestrianState,
     PositionQualityEvent,
+    TrafficSignalState,
     VehicleState,
 )
 from packages.schemas.hazards import HazardObservation
@@ -31,7 +32,7 @@ from .incidents import incident_traces
 logger = logging.getLogger("marga.gateway.world_state")
 router = APIRouter(tags=["world-state"])
 
-EntityType = Literal["vehicle", "pedestrian", "hazard", "risk"]
+EntityType = Literal["vehicle", "pedestrian", "hazard", "signal", "risk"]
 _entities: dict[tuple[EntityType, str], dict[str, Any]] = {}
 _subscribers: list[asyncio.Queue[dict[str, Any]]] = []
 _position_fusion = PositionFusionService()
@@ -84,6 +85,7 @@ def _legacy_snapshot() -> dict[str, Any]:
         "actors": [item["data"] for item in _entities_as_list("vehicle")],
         "pedestrians": [item["data"] for item in _entities_as_list("pedestrian")],
         "hazards": [item["data"] for item in _entities_as_list("hazard")],
+        "signals": [item["data"] for item in _entities_as_list("signal")],
         "risks": [item["data"] for item in _entities_as_list("risk")],
     }
 
@@ -167,6 +169,12 @@ async def ingest_vehicle_state(state: VehicleState) -> dict[str, Any]:
 
 async def ingest_pedestrian_state(state: PedestrianState) -> dict[str, Any]:
     entity = _store_model("pedestrian", state.actor_id, state)
+    _notify(_world_delta("delta", [entity]))
+    return {"entity": entity}
+
+
+async def ingest_signal_state(state: TrafficSignalState) -> dict[str, Any]:
+    entity = _store_model("signal", state.signal_id, state)
     _notify(_world_delta("delta", [entity]))
     return {"entity": entity}
 
@@ -267,6 +275,11 @@ async def ingest_vehicle(state: VehicleState) -> dict[str, Any]:
 @router.post("/v1/ingest/pedestrian-state", status_code=202)
 async def ingest_pedestrian(state: PedestrianState) -> dict[str, Any]:
     return await ingest_pedestrian_state(state)
+
+
+@router.post("/v1/ingest/signal-state", status_code=202)
+async def ingest_signal(state: TrafficSignalState) -> dict[str, Any]:
+    return await ingest_signal_state(state)
 
 
 @router.post("/v1/ingest/hazard-observation", status_code=202)

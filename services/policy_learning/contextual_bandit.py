@@ -13,6 +13,7 @@ from random import Random
 from typing import Literal
 
 PolicyAction = Literal["SLOW_DOWN_ADVISORY", "LOCAL_RELAY", "EARLY_WARNING"]
+SignalDuration = Literal[18, 25, 32]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,3 +78,30 @@ class ContextualSafetyBandit:
             "estimated_success": round(alpha / (alpha + beta), 3),
             "sampled_utility": round(sampled_utility, 3) if sampled_utility is not None else None,
         }
+
+
+class AdaptiveSignalBandit:
+    """Bounded Thompson-sampling controller for simulated signal green time."""
+
+    durations: tuple[SignalDuration, ...] = (18, 25, 32)
+
+    def __init__(self) -> None:
+        self._posteriors: dict[tuple[str, SignalDuration], list[float]] = {}
+
+    @staticmethod
+    def _bucket(ew_queue: int, ns_queue: int) -> str:
+        dominant = "ew" if ew_queue > ns_queue else "ns" if ns_queue > ew_queue else "balanced"
+        density = "dense" if ew_queue + ns_queue >= 16 else "light"
+        return f"{density}:{dominant}"
+
+    def choose_green(self, *, ew_queue: int, ns_queue: int, movement: str, decision_key: str) -> dict[str, object]:
+        bucket = self._bucket(ew_queue, ns_queue)
+        seed = int.from_bytes(sha256(f"signal:{bucket}:{movement}:{decision_key}".encode()).digest()[:8], "big")
+        rng = Random(seed)
+        samples = {duration: rng.betavariate(*self._posteriors.get((bucket, duration), [1.0, 1.0])) for duration in self.durations}
+        duration = max(samples, key=samples.get)
+        return {"model": "signal-timing-bandit-v1", "movement": movement, "duration_s": duration, "context_bucket": bucket, "sampled_utility": round(samples[duration], 3), "bounded": True}
+
+    def record_outcome(self, *, ew_queue: int, ns_queue: int, duration_s: SignalDuration, reward: float) -> None:
+        posterior = self._posteriors.setdefault((self._bucket(ew_queue, ns_queue), duration_s), [1.0, 1.0])
+        posterior[0 if reward >= 0.5 else 1] += 1.0
