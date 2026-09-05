@@ -93,16 +93,6 @@ function turnRoute(a: ArmGeom, b: ArmGeom, center: Point, control: RouteControl,
   };
 }
 
-function bypassRoute(a: ArmGeom, b: ArmGeom, via: Point[], refLat: number): RouteDef {
-  const path = [a.inboundFar, ...via, b.outboundFar];
-  return {
-    id: `${a.id}-${b.id}-service-bypass`,
-    path,
-    control: 'NONE',
-    stopLineFraction: null,
-  };
-}
-
 function laneMarkingsFor(arms: ArmGeom[]): Point[][] {
   return arms.map((arm) => [arm.far, arm.near]);
 }
@@ -171,16 +161,6 @@ function buildT(lat: number, lon: number): JunctionDefinition {
     turnRoute(E, N, center, 'SIGNAL_GROUP_A', lat),
     turnRoute(W, N, center, 'SIGNAL_GROUP_A', lat),
   ];
-  // An asymmetric residential/service road sits beside the peripheral
-  // T-junction. It provides a genuine alternate E↔W movement when the main
-  // approach is queued, without turning the central junction into a ring.
-  const serviceSouthWest = localPoint(lat, lon, -52, -72);
-  const serviceSouthEast = localPoint(lat, lon, -52, 72);
-  routes.push(
-    bypassRoute(E, W, [serviceSouthEast, serviceSouthWest], lat),
-    bypassRoute(W, E, [serviceSouthWest, serviceSouthEast], lat),
-  );
-
   const box = JUNCTION_R;
   return {
     type: 'T_JUNCTION',
@@ -190,7 +170,6 @@ function buildT(lat: number, lon: number): JunctionDefinition {
     roads: [
       [W.far, E.far],
       [N.far, center],
-      [W.far, serviceSouthWest, serviceSouthEast, E.far],
     ],
     laneMarkings: laneMarkingsFor(arms),
     areaPolygons: [{
