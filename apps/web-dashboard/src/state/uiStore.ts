@@ -58,7 +58,10 @@ export const useUIStore = create<UIState>((set) => ({
   selectedEntityType: null,
   openPanels: new Set<PanelId>(['alerts', 'health']),
   isSimulationMode: true,
-  showUncertainty: true,
+  // Positional uncertainty is useful supporting evidence, but drawing a ring
+  // around every moving road user makes the live scene look as if actors are
+  // blinking. Keep it available under Advanced → Layers instead.
+  showUncertainty: false,
   showTrajectories: false,
   showRiskZones: true,
   showV2XLinks: false,
