@@ -1,6 +1,8 @@
-# Marga
+# MARGA
 
-**Marga** is an India-ready V2X resilience platform for mixed traffic. It combines vehicle-side edge software, local PC5 safety messages, a live mobility graph, adaptive signal control, and capacity-aware routing to keep road users safer when cloud connectivity or GPS quality is unreliable.
+> **MARGA turns every connected vehicle into an intelligent edge node, using direct V2X communication, adaptive traffic control and cooperative routing to make Indian roads safer and more efficient even under unreliable connectivity and mixed traffic conditions.**
+
+**MARGA** is an edge-first V2X intelligence platform designed for Indian road conditions. A lightweight MARGA runtime is intended to run on a vehicle's ECU/OBU-class compute, using local GNSS, IMU and vehicle-telemetry inputs. Equipped cars, scooters, buses and roadside units communicate directly over C-V2X PC5, allowing time-critical safety functions to continue when internet connectivity is unavailable.
 
 > *Marga* means “path” or “way.” The project focuses on making those paths safer and more efficient under real Indian-road conditions.
 
@@ -10,11 +12,13 @@ Conventional connected-vehicle systems often assume reliable cellular coverage, 
 
 Marga is designed as a software-defined resilience layer:
 
-- A lightweight **edge runtime** can run alongside a vehicle ECU/OBU and publishes canonical vehicle state, local risk evidence, and PC5 messages.
-- Each participating vehicle has a **PC5/C-V2X node** for direct nearby discovery and safety delivery. When the internet is unavailable, local warnings still use the PC5 path.
+- A lightweight **edge runtime** runs alongside a vehicle ECU/OBU and publishes canonical vehicle state, local risk evidence, and PC5 messages.
+- Each participating vehicle acts as a **PC5/C-V2X edge node** for direct nearby discovery and safety delivery. When the internet is unavailable, local warnings still use the PC5 path.
 - A compatible **PC5-enabled traffic-light/RSU module** receives local road state and signal-control decisions. It can adjust signal timing without requiring every decision to travel through the cloud.
 - The backend builds a **live mobility graph** from vehicles, pedestrians, signals and hazards: density, queue, speed, capacity, confidence and downstream congestion are all explicit.
 - A **hybrid control strategy** uses RL for adaptive signal decisions and graph-based routing for feasible, explainable vehicle redistribution. A safety controller validates every signal action and routing never ignores capacity, closures, hazards or uncertainty.
+
+Immediate collision-risk warnings remain on the vehicle edge, while RSU-class edge nodes aggregate nearby observations into the live mobility graph. MARGA is VRU-aware: two-wheelers and pedestrians receive greater consequence weighting during local risk prioritisation.
 
 This is deliberately not an autonomous-driving system. Marga provides confidence-aware warnings and infrastructure coordination; drivers retain control.
 
@@ -36,11 +40,11 @@ The result is practical edge deployment: learning is used where adaptation is va
 
 The web simulation and Control Center use the same canonical telemetry path.
 
-1. A connected junction district contains a signalised hub, roundabout, railway crossing, T-junction, and a two-lane cut-through bypass.
+1. A connected junction district contains a signalised hub, roundabout, railway crossing and T-junction.
 2. Mixed road users generate live actor, pedestrian, signal, risk and graph telemetry.
 3. The mobility graph detects queue/density changes; the signal-control service can apply safety-approved phase changes.
-4. When the hub becomes congested, eligible traffic approaching from the roundabout or railway corridor can take the bypass and emerge on the opposite corridor instead of entering the hub.
-5. Collision and VRU risk outputs carry confidence and evidence; PC5 remains the intended local delivery path when the cloud is unavailable.
+4. Collision and VRU risk outputs carry confidence and evidence; PC5 remains the intended local delivery path when the cloud is unavailable.
+5. Current Events displays the latest verified conflicts, reported blockages/collisions, reroute suggestions and traffic-signal timing changes.
 
 The routing and signal-control layers are separate by design: **RL controls signal timing; congestion-aware graph routing selects and validates diversions.**
 
@@ -66,7 +70,7 @@ Vehicle ECU / OBU                 Traffic-light / RSU module
               Control Center + Driver Console
 ```
 
-Adapters isolate the core from a simulator, a vehicle ECU, phone, OBU, RSU or future C-V2X hardware. SUMO/OSM remain useful for repeatable testing, but the core services consume canonical contracts rather than simulator-specific types.
+Adapters isolate the core from a simulator, a vehicle ECU, phone, OBU, RSU or future C-V2X hardware. SUMO/OSM remain useful for repeatable testing, but the core services consume canonical contracts rather than simulator-specific types. Once compatible C-V2X hardware is available, software-defined safety logic, routing strategies and adaptive models can be delivered through OTA updates rather than requiring major infrastructure replacement.
 
 ## Repository layout
 
@@ -126,6 +130,6 @@ npm --prefix apps/web-dashboard run build
 
 ## Scope and limitations
 
-This hackathon prototype simulates PC5 transport and road participants; it is not RF-certified C-V2X hardware validation. The ECU/OBU and traffic-light modules are software integration targets with transport-neutral interfaces, so a real C-V2X PC5 implementation can replace the simulated transport without rewriting safety or graph logic.
+This hackathon prototype simulates PC5 transport and road participants; it is not RF-certified C-V2X hardware validation. The ECU/OBU and traffic-light modules are software integration targets with transport-neutral interfaces, so a real C-V2X PC5 implementation can replace the simulated transport without rewriting safety or graph logic. OTA fleet-management infrastructure itself is outside the current prototype.
 
 Marga does not claim autonomous vehicle control, perfect prediction of human intent, or city-scale production traffic optimization.
