@@ -6,7 +6,7 @@ import type { RouteChange } from '../../types/routes';
 // published for this vehicle, nothing inferred or fabricated.
 
 const OLD_ROUTE_COLOR: [number, number, number, number] = [155, 161, 176, 160];
-const NEW_ROUTE_COLOR: [number, number, number, number] = [99, 102, 241, 230];
+const NEW_ROUTE_COLOR: [number, number, number, number] = [251, 146, 60, 230];
 
 export function createRerouteLayer(change: RouteChange | undefined) {
   if (!change) return [];

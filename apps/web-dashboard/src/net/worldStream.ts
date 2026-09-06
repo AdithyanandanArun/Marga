@@ -27,7 +27,8 @@ export class WorldStream {
   private disposed = false;
 
   constructor(config: StreamConfig = {}) {
-    const wsBase = `ws://${window.location.host}`;
+    const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsBase = `${wsScheme}://${window.location.host}`;
     this.config = {
       worldUrl: config.worldUrl ?? `${wsBase}/v1/world-state/stream`,
       alertUrl: config.alertUrl ?? `${wsBase}/v1/stream/alerts`,
@@ -47,24 +48,28 @@ export class WorldStream {
 
   private connectWorld(): void {
     if (this.disposed) return;
+    if (this.worldWs?.readyState === WebSocket.OPEN || this.worldWs?.readyState === WebSocket.CONNECTING) return;
 
     const [minLon, minLat, maxLon, maxLat] = this.config.bbox;
     const url = `${this.config.worldUrl}?bbox=${minLon},${minLat},${maxLon},${maxLat}&detail=${this.config.detail}`;
 
+    let socket: WebSocket;
     try {
-      this.worldWs = new WebSocket(url);
+      socket = new WebSocket(url);
     } catch {
       this.scheduleReconnect('world');
       return;
     }
+    this.worldWs = socket;
 
-    this.worldWs.onopen = () => {
+    socket.onopen = () => {
+      if (this.disposed || this.worldWs !== socket) return;
       this.currentDelay.world = this.config.reconnectDelay;
-      if (this.disposed) return;
       this.config.onConnectionChange(true);
     };
 
-    this.worldWs.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.disposed || this.worldWs !== socket) return;
       try {
         const msg: StreamMessage = JSON.parse(event.data);
         if ('upserts' in msg) {
@@ -79,32 +84,37 @@ export class WorldStream {
       }
     };
 
-    this.worldWs.onclose = () => {
+    socket.onclose = () => {
       // A disposed stream is not allowed to report. Closing a socket that is
       // still CONNECTING fires `onclose` asynchronously, so a stream torn down
       // on remount would otherwise flip the badge to "reconnecting" after its
       // replacement had already connected, and leave it stuck there.
-      if (this.disposed) return;
+      if (this.disposed || this.worldWs !== socket) return;
+      this.worldWs = null;
       this.config.onConnectionChange(false);
       this.scheduleReconnect('world');
     };
 
-    this.worldWs.onerror = () => {
-      this.worldWs?.close();
+    socket.onerror = () => {
+      if (this.worldWs === socket) socket.close();
     };
   }
 
   private connectAlerts(): void {
     if (this.disposed) return;
+    if (this.alertWs?.readyState === WebSocket.OPEN || this.alertWs?.readyState === WebSocket.CONNECTING) return;
 
+    let socket: WebSocket;
     try {
-      this.alertWs = new WebSocket(this.config.alertUrl);
+      socket = new WebSocket(this.config.alertUrl);
     } catch {
       this.scheduleReconnect('alert');
       return;
     }
+    this.alertWs = socket;
 
-    this.alertWs.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.disposed || this.alertWs !== socket) return;
       try {
         const msg: AlertStreamMessage = JSON.parse(event.data);
         if (msg.kind === 'alert') {
@@ -115,14 +125,18 @@ export class WorldStream {
       }
     };
 
-    this.alertWs.onopen = () => { this.currentDelay.alert = this.config.reconnectDelay; };
+    socket.onopen = () => {
+      if (!this.disposed && this.alertWs === socket) this.currentDelay.alert = this.config.reconnectDelay;
+    };
 
-    this.alertWs.onclose = () => {
+    socket.onclose = () => {
+      if (this.disposed || this.alertWs !== socket) return;
+      this.alertWs = null;
       this.scheduleReconnect('alert');
     };
 
-    this.alertWs.onerror = () => {
-      this.alertWs?.close();
+    socket.onerror = () => {
+      if (this.alertWs === socket) socket.close();
     };
   }
 
@@ -137,7 +151,8 @@ export class WorldStream {
     if (this.disposed) return;
     // Never stack attempts for the same channel; a flapping socket would
     // otherwise queue one timer per close and reconnect in a storm.
-    if (this.reconnectTimers[which]) return;
+    const socket = which === 'world' ? this.worldWs : this.alertWs;
+    if (this.reconnectTimers[which] || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
     this.reconnectTimers[which] = setTimeout(() => {
       this.reconnectTimers[which] = null;
       if (which === 'world') this.connectWorld();
@@ -153,8 +168,14 @@ export class WorldStream {
       if (timer) clearTimeout(timer);
       this.reconnectTimers[which] = null;
     }
-    this.worldWs?.close();
-    this.alertWs?.close();
+    for (const socket of [this.worldWs, this.alertWs]) {
+      if (!socket) continue;
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onclose = null;
+      socket.onerror = null;
+      socket.close();
+    }
     this.worldWs = null;
     this.alertWs = null;
   }

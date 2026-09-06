@@ -29,6 +29,9 @@ from packages.schemas.canonical import RiskEvent, RiskType, VehicleState
 
 logger = logging.getLogger(__name__)
 
+# The public policy identifier is part of the replay/API contract. Thresholds
+# remain evidence-backed in every event, so keep this stable until a versioned
+# migration is introduced rather than silently breaking consumers.
 POLICY_VERSION = "edge-v2x-v1"
 
 # Conflict classification thresholds (heading delta in degrees).
@@ -95,8 +98,8 @@ class EdgeRiskEvaluator:
     def __init__(
         self,
         *,
-        horizon_s: float = 8.0,
-        base_clearance_m: float = 2.5,
+        horizon_s: float = 9.5,
+        base_clearance_m: float = 3.5,
         max_eval_distance_m: float = 75.0,
     ) -> None:
         self.horizon_s = horizon_s

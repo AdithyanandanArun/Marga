@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import maplibregl from 'maplibre-gl';
 import { Deck } from '@deck.gl/core';
-import { PathLayer, PolygonLayer, TextLayer } from '@deck.gl/layers';
+import { PathLayer, PolygonLayer } from '@deck.gl/layers';
 import { ArrowLeft, CheckCircle2, Pause, Play, Radio, RotateCcw, TrainTrack } from 'lucide-react';
 import type { PedestrianState, VehicleState, TrafficSignalState } from '../types/canonical';
 import { createActorLayer } from '../map/layers/actors';
@@ -89,7 +89,7 @@ export function SimulationStudio() {
       const activeNetwork = networkRef.current;
       if (!activeNetwork || !deckRef.current) return;
       const now = performance.now();
-      if (now - lastRenderAt.current < 33) return;
+      if (now - lastRenderAt.current < 22) return;
       lastRenderAt.current = now;
       deckRef.current.setProps({ layers: buildSceneLayers(activeNetwork, vehicles, pedestrians, signals, mapRef.current?.getZoom() ?? 17.2) });
     };
@@ -188,13 +188,14 @@ export function SimulationStudio() {
 }
 
 function buildSceneLayers(network: JunctionNetwork, vehicles: VehicleState[], pedestrians: PedestrianState[], signals: TrafficSignalState[], zoom: number) {
-  const roads = network.junctions.flatMap((junction) => junction.roads);
-  const laneMarkings = network.junctions.flatMap((junction) => junction.laneMarkings);
+  const roads = [...network.junctions.flatMap((junction) => junction.roads), ...network.bypassRoads];
+  const bypassRoads = network.bypassRoads;
+  const laneMarkings = [...network.junctions.flatMap((junction) => junction.laneMarkings), ...network.bypassLaneMarkings];
+  const stopLines = network.bypassStopLines;
   const areaPolygons = network.junctions.flatMap((junction) => junction.areaPolygons);
   const rails = network.junctions.flatMap((junction) => junction.rails ?? []);
   const sleepers = network.junctions.flatMap((junction) => junction.sleepers ?? []);
   const crosswalks = network.junctions.flatMap((junction) => junction.crosswalks);
-  const destinationRoads = network.destinationRoads;
   return [
     new PathLayer({
       id: 'sim-road-bed', data: roads, getPath: (d: Point[]) => d,
@@ -206,10 +207,26 @@ function buildSceneLayers(network: JunctionNetwork, vehicles: VehicleState[], pe
       getColor: SURFACE_COLOR, getWidth: 10, widthUnits: 'meters',
       capRounded: true, jointRounded: true, pickable: false,
     }),
+    new PathLayer({
+      id: 'sim-bypass-bed', data: bypassRoads, getPath: (d: Point[]) => d,
+      getColor: [32, 41, 55, 255], getWidth: 18, widthUnits: 'meters', capRounded: true, jointRounded: true, pickable: false,
+    }),
+    new PathLayer({
+      id: 'sim-bypass-surface', data: bypassRoads, getPath: (d: Point[]) => d,
+      getColor: [100, 113, 132, 255], getWidth: 14, widthUnits: 'meters', capRounded: true, jointRounded: true, pickable: false,
+    }),
+    new PathLayer({
+      id: 'sim-bypass-centre-line', data: bypassRoads, getPath: (d: Point[]) => d,
+      getColor: [248, 250, 252, 245], getWidth: 1.1, widthUnits: 'meters', capRounded: true, jointRounded: true, pickable: false,
+    }),
     ...(laneMarkings.length > 0 ? [new PathLayer({
       id: 'sim-lane-marks', data: laneMarkings, getPath: (d: Point[]) => d,
       getColor: LANE_LINE_COLOR, getWidth: 0.6, widthUnits: 'meters', pickable: false,
     })] : []),
+    new PathLayer({
+      id: 'sim-bypass-stop-lines', data: stopLines, getPath: (d: Point[]) => d,
+      getColor: [245, 245, 245, 235], getWidth: 0.8, widthUnits: 'meters', capRounded: true, pickable: false,
+    }),
     new PolygonLayer({
       id: 'sim-area', data: areaPolygons,
       getPolygon: (d: { polygon: Point[] }) => d.polygon,
@@ -218,8 +235,6 @@ function buildSceneLayers(network: JunctionNetwork, vehicles: VehicleState[], pe
       getLineWidth: 1, lineWidthUnits: 'pixels', stroked: true, filled: true, pickable: false,
     }),
     new PathLayer({ id: 'sim-zebra-crossings', data: crosswalks, getPath: (d: Point[]) => d, getColor: [245, 245, 245, 220], getWidth: 1.2, widthUnits: 'meters', pickable: false }),
-    new PathLayer({ id: 'sim-destination-roads', data: destinationRoads, getPath: (d: typeof destinationRoads[number]) => d.path, getColor: (d: typeof destinationRoads[number]) => d.feature === 'CITY_RAIL' ? [245, 158, 11, 220] : d.feature === 'BUS_TERMINAL' ? [167, 139, 250, 220] : d.feature === 'AIRPORT_CORRIDOR' ? [34, 211, 238, 220] : [251, 146, 60, 220], getWidth: 8, widthUnits: 'meters', getDashArray: [12, 8], dashJustified: true, pickable: false }),
-    new TextLayer({ id: 'sim-destination-labels', data: destinationRoads, getPosition: (d: typeof destinationRoads[number]) => d.path[d.path.length - 1], getText: (d: typeof destinationRoads[number]) => d.label, getSize: 13, sizeUnits: 'pixels', getColor: [226, 232, 240, 230], getBackgroundColor: [15, 23, 42, 210], background: true, getPixelOffset: [0, -12], billboard: true, pickable: false }),
     ...(rails.length ? [new PathLayer({
       id: 'sim-rails', data: rails, getPath: (d: Point[]) => d,
       getColor: RAIL_TRACK_COLOR, getWidth: 0.18, widthUnits: 'meters', pickable: false,

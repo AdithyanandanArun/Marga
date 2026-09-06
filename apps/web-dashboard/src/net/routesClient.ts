@@ -36,7 +36,7 @@ export class RouteStream {
   private socket: ReconnectingSocket;
 
   constructor() {
-    const wsBase = `ws://${window.location.host}`;
+    const wsBase = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
     this.socket = new ReconnectingSocket({
       url: `${wsBase}/v1/stream/routes`,
       onMessage: (data) => this.handleMessage(data),

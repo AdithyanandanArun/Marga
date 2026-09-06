@@ -6,14 +6,16 @@ import type { SimulationIncident } from './vehicleEngine';
 const NETWORK_LAT = 12.9550;
 const NETWORK_LON = 77.6200;
 const SIMULATION_TIME_SCALE = 1.8;
-const SIMULATION_STEP_MS = 33;
-// 4 Hz is sufficient for the displayed road motion and keeps one browser
-// adapter from flooding the gateway with duplicate animation-frame updates.
+const SIMULATION_STEP_MS = 22;
+// Publish canonical telemetry at the original four batches per second.
 const TELEMETRY_INTERVAL_MS = 250;
 // Applied RL actions are drained on a slower cadence than telemetry; signal
 // phases change on the order of seconds, so 1 Hz is ample and keeps the
 // control loop clearly separated from the movement feed.
 const SIGNAL_COMMAND_INTERVAL_MS = 1000;
+const PRODUCER_LEASE_KEY = 'marga-network-telemetry-producer-v1';
+const PRODUCER_LEASE_MS = 3_500;
+const PRODUCER_LEASE_REFRESH_MS = 1_000;
 const ACTOR_TYPE_FOR_ADAPTER: Record<VehicleState['actor_type'], string> = {
   CAR: 'car', BIKE: 'motorcycle', AUTO: 'auto_rickshaw', BUS: 'bus', TRUCK: 'truck', AMBULANCE: 'emergency', OTHER: 'other',
 };
@@ -30,11 +32,18 @@ interface PedestrianProfile {
   nextPauseAtMs: number;
 }
 
-const pedestrianProfiles: PedestrianProfile[] = pedestrianCrossings.map((_, index) => ({
+const pedestrianPlans = pedestrianCrossings.flatMap((crossing, crossingIndex) => [
+  { crossing, direction: 1 as const, crossingIndex },
+  { crossing, direction: -1 as const, crossingIndex },
+]);
+
+const pedestrianProfiles: PedestrianProfile[] = pedestrianPlans.map((plan, index) => ({
   // Stable human walking speeds: slower walkers and brisk walkers, all within
   // a realistic range rather than a new random speed every animation frame.
   speedMps: 0.55 + Math.random() * 0.85,
-  direction: Math.random() < 0.5 ? 1 : -1,
+  // Each crossing gets a pair moving in opposite directions. Additional
+  // speed/pause variation keeps them from looking like cloned actors.
+  direction: plan.direction,
   pauseUntilMs: 0,
   nextPauseAtMs: 3_000 + Math.random() * 4_000 + index * 700,
 }));
@@ -52,7 +61,7 @@ export type FeedState = 'connecting' | 'live' | 'offline';
  * It is intentionally a singleton: navigating between views cannot create a
  * second, divergent traffic world or freeze the gateway feed. */
 class NetworkTelemetryRuntime {
-  // A 40-vehicle mixed-traffic baseline makes queues and conflict prediction
+  // A 30-vehicle mixed-traffic baseline makes queues and conflict prediction
   // visible without turning the map into an unreadable wall of actors.
   private engine = new JunctionNetworkEngine(buildJunctionNetwork(NETWORK_LAT, NETWORK_LON), 30, 0.65);
   private subscribers = new Set<(frame: NetworkFrame) => void>();
@@ -69,15 +78,19 @@ class NetworkTelemetryRuntime {
   private topologiesRegistered = false;
   private lastSimulationTimestamp = 0;
   private simulationFrame: ReturnType<JunctionNetworkEngine['tick']> | null = null;
-  private pedestrianProgress: number[] = pedestrianCrossings.map((_, index) => (index % 2 === 0 ? 0.08 : 0.92));
+  private pedestrianProgress: number[] = pedestrianPlans.map((plan) => plan.direction === 1 ? 0.08 : 0.92);
   private lastPedestrianTimestamp = 0;
+  private readonly producerId = crypto.randomUUID();
+  private ownsProducerLease = false;
+  private lastLeaseRefresh = 0;
 
   private pedestriansAt(timestampMs: number, vehicles: VehicleState[] = []): PedestrianState[] {
     const dtS = this.lastPedestrianTimestamp > 0
       ? Math.min(0.5, Math.max(0, timestampMs - this.lastPedestrianTimestamp) / 1000)
       : 0;
     this.lastPedestrianTimestamp = timestampMs;
-    return pedestrianCrossings.map((crossing, index) => {
+    return pedestrianPlans.map((plan, index) => {
+      const crossing = plan.crossing;
       const [start, end] = crossing;
       const profile = pedestrianProfiles[index];
       let progress = this.pedestrianProgress[index];
@@ -111,7 +124,7 @@ class NetworkTelemetryRuntime {
         schema_version: '1.0', actor_id: `network-pedestrian-${index}`, ts: new Date().toISOString(),
         position: { lat, lon }, position_uncertainty_m: 1.2, speed_mps: canWalk ? profile.speedMps : 0,
         heading_deg: profile.direction === 1 ? heading : (heading + 180) % 360,
-        road_segment_id: `crosswalk-${index}`, source: 'SIMULATION',
+        road_segment_id: `crosswalk-${plan.crossingIndex}`, source: 'SIMULATION',
         path_hint: 'zebra-crossing', road_context: 'CROSSWALK', confidence: 0.95,
       } as PedestrianState;
     });
@@ -140,6 +153,7 @@ class NetworkTelemetryRuntime {
         cancelAnimationFrame(this.frameHandle);
         this.frameHandle = null;
         this.lastTick = 0;
+        this.releaseProducerLease();
       }
     };
   }
@@ -170,6 +184,14 @@ class NetworkTelemetryRuntime {
       // and `frameHandle` still holds the spent id so `ensureRunning` refuses
       // to restart it. That is unrecoverable without a page reload.
       try {
+        // Multiple tabs used to run independent 30-vehicle simulations and
+        // publish all of them into one gateway. This small browser lease makes
+        // exactly one tab the telemetry producer; other Control Center tabs
+        // render the shared gateway stream without multiplying work.
+        if (!this.claimProducerLease(timestamp)) {
+          this.lastTick = timestamp;
+          return;
+        }
         const dt = this.lastTick ? Math.min(200, timestamp - this.lastTick) : 16;
         this.lastTick = timestamp;
         const pedestrianTimestamp = this.paused ? this.lastPedestrianTimestamp : timestamp;
@@ -213,6 +235,43 @@ class NetworkTelemetryRuntime {
       }
     };
     this.frameHandle = requestAnimationFrame(tick);
+  }
+
+  private claimProducerLease(timestamp: number): boolean {
+    if (timestamp - this.lastLeaseRefresh < PRODUCER_LEASE_REFRESH_MS) return this.ownsProducerLease;
+    this.lastLeaseRefresh = timestamp;
+    try {
+      const now = Date.now();
+      const current = JSON.parse(localStorage.getItem(PRODUCER_LEASE_KEY) ?? 'null') as { id?: string; expiresAt?: number } | null;
+      const isActiveTab = document.visibilityState === 'visible';
+      // The visible tab is the operator's current view. Let it take ownership
+      // from a hidden/background tab instead of leaving the demo apparently
+      // frozen while an old tab holds the lease.
+      if (current?.id && current.id !== this.producerId && (current.expiresAt ?? 0) > now && !isActiveTab) {
+        this.ownsProducerLease = false;
+        return false;
+      }
+      const lease = { id: this.producerId, expiresAt: now + PRODUCER_LEASE_MS };
+      localStorage.setItem(PRODUCER_LEASE_KEY, JSON.stringify(lease));
+      const confirmed = JSON.parse(localStorage.getItem(PRODUCER_LEASE_KEY) ?? 'null') as { id?: string } | null;
+      this.ownsProducerLease = confirmed?.id === this.producerId;
+      return this.ownsProducerLease;
+    } catch {
+      // Storage can be disabled in privacy modes. In that case preserve the
+      // original single-tab behaviour rather than stopping all telemetry.
+      this.ownsProducerLease = true;
+      return true;
+    }
+  }
+
+  private releaseProducerLease(): void {
+    if (!this.ownsProducerLease) return;
+    try {
+      const current = JSON.parse(localStorage.getItem(PRODUCER_LEASE_KEY) ?? 'null') as { id?: string } | null;
+      if (current?.id === this.producerId) localStorage.removeItem(PRODUCER_LEASE_KEY);
+    } catch { /* storage unavailable */ }
+    this.ownsProducerLease = false;
+    this.lastLeaseRefresh = 0;
   }
 
   /** Announce junction topologies, then apply any RL actions the controller

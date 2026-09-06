@@ -516,7 +516,8 @@ export class JunctionSimEngine {
   /** Whether an incoming vehicle can enter this junction at the given shared
    * road endpoint.  This uses geometry, not a fixed junction pairing. */
   canAcceptAt(position: Point): boolean {
-    return this.junction.routes.some((route) => distanceMeters(route.path[0], position, this.junction.center[1]) < 2);
+    return this.junction.routes.some((route) =>
+      distanceMeters(route.path[0], position, this.junction.center[1]) < 2);
   }
 
   /** Admit at a shared endpoint.  Low traffic samples a legal outgoing
@@ -645,12 +646,17 @@ export class JunctionSimEngine {
    * route. A faster follower moves smoothly into a free adjacent lane; if it
    * cannot, it brakes behind the leader instead of occupying the same body. */
   private applyFollowingPhysics(): void {
+    // Snapshot static peer bodies once per physics tick. The old inner-loop
+    // reconstruction allocated every vehicle footprint for every follower,
+    // which made a 30-vehicle demo spend most of its frame time in rendering
+    // preparation rather than movement.
+    const nearbyBodies = [...this.bodies(), ...this.externalBodies()];
     for (const v of this.vehicles) {
       const own = this.pose(v), rad = own.heading * Math.PI / 180;
       const forward = [Math.sin(rad), Math.cos(rad)];
       const lateral = [Math.cos(rad), -Math.sin(rad)];
       const size = dimensions(v.actorType);
-      for (const other of [...this.bodies(), ...this.externalBodies()]) {
+      for (const other of nearbyBodies) {
         if (other.id === v.id) continue;
         const dx = (other.position[0] - own.position[0]) * 111320 * Math.cos(own.position[1] * Math.PI / 180);
         const dy = (other.position[1] - own.position[1]) * 111320;

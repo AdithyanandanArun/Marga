@@ -7,7 +7,7 @@ const SIGNAL_COLORS: Record<string, [number, number, number]> = {
   GREEN: [34, 197, 94],
 };
 
-const RSU_COLOR: [number, number, number] = [167, 139, 250];
+const RSU_COLOR: [number, number, number] = [251, 146, 60];
 
 const ROAD_EVENT_COLORS: Record<string, [number, number, number]> = {
   LANE_NARROWING: [251, 146, 60],

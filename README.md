@@ -1,156 +1,131 @@
 # Marga
 
-**Marga** is an India-ready, software-defined V2X (vehicle-to-everything) resilience platform. It turns live road-user, infrastructure, and hazard signals into explainable, confidence-aware safety alerts—while remaining useful through unreliable positioning and connectivity.
+**Marga** is an India-ready V2X resilience platform for mixed traffic. It combines vehicle-side edge software, local PC5 safety messages, a live mobility graph, adaptive signal control, and capacity-aware routing to keep road users safer when cloud connectivity or GPS quality is unreliable.
 
-> The name *Marga* means “path” or “way.” Our goal is safer, more resilient paths on Indian roads.
+> *Marga* means “path” or “way.” The project focuses on making those paths safer and more efficient under real Indian-road conditions.
 
-## Why Marga
+## The idea
 
-Indian roads combine dense mixed traffic, variable road quality, non-connected road users, inconsistent connectivity, and rapidly changing hazards. Marga provides a deployable software core that can:
+Conventional connected-vehicle systems often assume reliable cellular coverage, accurate GPS, and predictable traffic. Indian roads cannot make those assumptions: cars, bikes, autos, buses, pedestrians and hazards share constrained roads; connectivity is intermittent; and congestion changes quickly.
 
-- ingest vehicle, pedestrian, infrastructure, and road-event data through a common contract;
-- estimate position uncertainty and preserve it in every safety decision;
-- predict conflicts from trajectories and road geometry;
-- fuse corroborating hazard reports, while handling expiry and confidence;
-- detect safety situations such as collision risks, wrong-way travel, emergency braking, stalled vehicles, blind intersections, road hazards, and animal/pedestrian conflicts;
-- prioritize actionable alerts with evidence, trust, and uncertainty; and
-- continue safety-critical messaging through degraded or offline connectivity paths.
+Marga is designed as a software-defined resilience layer:
 
-SUMO is used to supply realistic test inputs during the hackathon. It is never the product logic: the same core is designed to accept future GNSS, phone, OBU, RSU, and vehicle-telemetry adapters.
+- A lightweight **edge runtime** can run alongside a vehicle ECU/OBU and publishes canonical vehicle state, local risk evidence, and PC5 messages.
+- Each participating vehicle has a **PC5/C-V2X node** for direct nearby discovery and safety delivery. When the internet is unavailable, local warnings still use the PC5 path.
+- A compatible **PC5-enabled traffic-light/RSU module** receives local road state and signal-control decisions. It can adjust signal timing without requiring every decision to travel through the cloud.
+- The backend builds a **live mobility graph** from vehicles, pedestrians, signals and hazards: density, queue, speed, capacity, confidence and downstream congestion are all explicit.
+- A **hybrid control strategy** uses RL for adaptive signal decisions and graph-based routing for feasible, explainable vehicle redistribution. A safety controller validates every signal action and routing never ignores capacity, closures, hazards or uncertainty.
+
+This is deliberately not an autonomous-driving system. Marga provides confidence-aware warnings and infrastructure coordination; drivers retain control.
+
+## Why hybrid RL + graph optimization?
+
+Running an unconstrained end-to-end RL model for every vehicle route is computationally expensive, difficult to explain, and unsafe under sparse or noisy observations. Marga separates the jobs:
+
+| Layer | Responsibility |
+| --- | --- |
+| RL signal policy | Proposes discrete, adaptive signal actions such as hold, extend green, or advance to the next safe phase. |
+| Signal safety controller | Enforces minimum green, amber/all-red, conflicting-movement, and pedestrian-clearance rules. |
+| Mobility graph | Represents live road load, queues, speed, hazards, capacity and GPS confidence. |
+| Cooperative routing | Uses graph costs and capacity limits to distribute diversion demand across viable alternatives instead of sending every vehicle to one shortcut. |
+| PC5 edge safety | Delivers nearby collision/VRU warnings locally even if cloud connectivity is degraded. |
+
+The result is practical edge deployment: learning is used where adaptation is valuable, while deterministic safety and route-feasibility checks remain inspectable.
+
+## What the current prototype demonstrates
+
+The web simulation and Control Center use the same canonical telemetry path.
+
+1. A connected junction district contains a signalised hub, roundabout, railway crossing, T-junction, and a two-lane cut-through bypass.
+2. Mixed road users generate live actor, pedestrian, signal, risk and graph telemetry.
+3. The mobility graph detects queue/density changes; the signal-control service can apply safety-approved phase changes.
+4. When the hub becomes congested, eligible traffic approaching from the roundabout or railway corridor can take the bypass and emerge on the opposite corridor instead of entering the hub.
+5. Collision and VRU risk outputs carry confidence and evidence; PC5 remains the intended local delivery path when the cloud is unavailable.
+
+The routing and signal-control layers are separate by design: **RL controls signal timing; congestion-aware graph routing selects and validates diversions.**
 
 ## Architecture
 
 ```text
-OSM / SUMO / future real-world feeds
-              |
-        Input adapters
-              |
-      Canonical State API
-              |
-        World-state bus
-   ┌──────────┼──────────┐
- Position   Trust     Hazard fusion
-   └──────────┼──────────┘
-        Risk / collision engine
-              |
-       Alert prioritization
-      ┌───────┴────────┐
-   REST + WebSocket   V2X adapters
-      |
- Control Center / Driver Console
+Vehicle ECU / OBU                 Traffic-light / RSU module
+  ActorState + local risk             Signal state + PC5 node
+          │                                    │
+          ├──── PC5 / direct local V2X ────────┤
+          │                                    │
+          └──────── canonical telemetry ───────┘
+                            │
+                     Gateway + world state
+                            │
+                     Live mobility graph
+              ┌─────────────┼─────────────┐
+              │             │             │
+          Risk / V2X    RL signals   Cooperative routing
+              │             │             │
+              └─────────────┴─────────────┘
+                            │
+              Control Center + Driver Console
 ```
 
-The backend is the source of truth. The frontend renders canonical world and alert state and sends explicit operator commands; it never invents safety outcomes.
+Adapters isolate the core from a simulator, a vehicle ECU, phone, OBU, RSU or future C-V2X hardware. SUMO/OSM remain useful for repeatable testing, but the core services consume canonical contracts rather than simulator-specific types.
 
-## Technology direction
-
-| Area | Baseline |
-| --- | --- |
-| Road network | OpenStreetMap |
-| Simulation | SUMO via TraCI (libsumo for scale) |
-| Services | Python 3.12+ and FastAPI |
-| Live APIs | REST, WebSocket, event streams |
-| Mapping | MapLibre GL JS + deck.gl |
-| Spatial persistence | PostgreSQL + PostGIS |
-| Ephemeral state | Redis (where needed) |
-| Event transport | Broker-neutral contracts; NATS JetStream or Redpanda/Kafka at scale |
-| Observability | OpenTelemetry + Prometheus-compatible metrics |
-
-## Core principles
-
-- **No demo-only logic.** No canned outcomes, fixed coordinates, hard-coded actor IDs, or `if demo_case` branches.
-- **Canonical contracts first.** Every adapter normalizes data before it reaches decision logic; core services do not depend on SUMO, frontend, or vendor-specific types.
-- **Confidence is mandatory.** Safety outputs carry uncertainty, evidence, provenance, and a policy/version basis.
-- **Simulation–reality parity.** Replacing a simulator feed with a real feed must require adapter/configuration changes, not a rewrite of the core.
-- **Offline-first safety.** Disrupted cloud connectivity must lower certainty or alter delivery paths—not silently manufacture certainty.
-- **Explainable decisions.** Incidents and alerts are persisted/replayable with their contributing evidence and decision trace.
-
-## First vertical slice
-
-Before feature expansion, Marga will prove one real end-to-end flow:
+## Repository layout
 
 ```text
-OSM map → SUMO actor → canonical VehicleState → world state
-→ position/risk evaluation → evidence-bearing Alert → WebSocket → Control Center
+apps/web-dashboard/       Control Center and Junction Simulator
+packages/schemas/         Canonical actor, risk, signal and graph contracts
+services/gateway/         API gateway, world state, live streams, signal bridge
+services/mobility_graph/  Confidence-aware road-edge and intersection state
+services/routing/         Edge costs, A*/Dijkstra, cooperative rerouting
+services/signal-rl/       Adaptive signal policy and safety controller
+services/edge_v2x/        Edge nodes, local neighbour discovery and PC5 transport
+services/risk/            Trajectory/collision risk evaluation
+tests/                    Unit, contract and integration coverage
 ```
 
-This slice must work on an imported OSM network and with arbitrary valid inputs—not only a prepared demo scenario.
+## Run locally
 
-## Planned repository layout
+Install Python dependencies (including local service packages):
 
-```text
-apps/             # Web dashboard, driver console, scenario studio
-services/         # Gateway, world state, position, risk, hazards, trust, alerts, simulation adapter
-packages/         # Canonical schemas, geospatial helpers, V2X protocol
-tests/            # Contract, integration, E2E, and performance suites
-infra/            # Docker, compose, Kubernetes, observability
-tools/            # OSM import, scenario building, load generation
-docs/             # Architecture decisions and API documentation
+```bash
+make install
 ```
 
-## Canonical event flow
+Start the gateway:
 
-All entities and messages will have a `schema_version`, UTC timestamps, source metadata, and stable correlation/trace identifiers. Core event families include:
-
-- `actor.state.updated`
-- `infrastructure.signal.updated`
-- `hazard.observed` and `hazard.updated`
-- `position.estimate.updated`
-- `trust.assessment.updated`
-- `risk.detected`
-- `alert.issued`
-
-Key invariants: speeds are stored in m/s, headings are degrees clockwise from true north (`0–360`), and confidence is always expressed from `0` to `1`.
-
-## API direction
-
-The gateway will expose canonical ingestion and world-state endpoints such as:
-
-```text
-POST /v1/ingest/vehicle-state
-POST /v1/ingest/pedestrian-state
-POST /v1/ingest/hazard-observation
-GET  /v1/world/snapshot
-GET  /v1/incidents/{id}/trace
-WS   /v1/stream/world
-WS   /v1/stream/alerts
+```bash
+.venv/bin/uvicorn services.gateway.app:app --host 127.0.0.1 --port 8000
 ```
 
-Test-only endpoints will drive fault injection and scenarios so network, GPS, RSU, and actor failures affect the real processing pipeline.
+In another terminal, start the dashboard:
 
-## Roadmap
+```bash
+npm --prefix apps/web-dashboard install
+npm --prefix apps/web-dashboard run dev -- --host 0.0.0.0
+```
 
-1. Bootstrap repository, CI, canonical schemas, and contract tests.
-2. Import an OSM region and stream SUMO actors/signals into world state.
-3. Render live actors and hazards with MapLibre/deck.gl.
-4. Build generic trajectory and time-to-collision risk detection.
-5. Add position uncertainty, connectivity resilience, hazards, and trust.
-6. Expand India-focused safety features: mixed traffic, wrong-way travel, blind intersections, road narrowing, animal/pedestrian risks, and emergency priority.
-7. Add deterministic scenario replay, scale testing, containers, and real-adapter stubs.
+Open `http://127.0.0.1:3000`. The dashboard starts the shared in-browser simulation adapter; the Control Center renders only data returned through the gateway stream.
 
-## Team ownership
+## Key contracts and invariants
 
-| Owner | Focus |
-| --- | --- |
-| Adithyan — Lead | Architecture, canonical contracts, integration, release decisions |
-| Adithyan — Agent 1 | World state, geospatial/position core, trajectories, collision risk, evidence |
-| Adithyan — Agent 2 | Hazard fusion, trust/security, offline transport, persistence, observability, CI/deploy |
-| Amrita | OSM/SUMO, simulation and world systems, deterministic scenarios, failure injection |
-| Hrishi | Safety policies, acceptance evaluation, false-positive/missed-detection analysis |
-| Ali | Control Center, Driver Console, Scenario Studio, live-map UX, E2E verification |
+- Every actor, signal, hazard and graph update is timestamped, source-tagged and versioned.
+- Position uncertainty, confidence, evidence and provenance are preserved in safety decisions.
+- PC5/local delivery is not silently replaced with a fabricated cloud path when connectivity drops.
+- The frontend displays canonical backend state; it does not invent safety alerts.
+- Signal actions pass safety constraints before application.
+- Routing considers travel time, congestion, hazards, uncertainty, closures and remaining capacity.
 
-## Development status
+## Verification
 
-The repository has been initialized. The next foundation work is to add the service skeleton, canonical schemas, local container environment, and automated contract checks. Until those land, the commands and endpoints above are architecture targets rather than runnable interfaces.
+```bash
+make lint
+make typecheck
+make test
+npm --prefix apps/web-dashboard run typecheck
+npm --prefix apps/web-dashboard run build
+```
 
-## Contribution rules
+## Scope and limitations
 
-- Preserve public contracts; document compatibility changes with a migration note or ADR and update affected tests.
-- Treat every pull/integration as a deliberate conflict-resolution task—inspect intent and rerun affected checks.
-- Do not add `Co-authored-by` trailers or equivalent co-author tags to commits.
-- Finish each change with appropriate tests and a handoff note covering contracts, files, migrations/configuration, test results, limitations, and likely conflict hotspots.
+This hackathon prototype simulates PC5 transport and road participants; it is not RF-certified C-V2X hardware validation. The ECU/OBU and traffic-light modules are software integration targets with transport-neutral interfaces, so a real C-V2X PC5 implementation can replace the simulated transport without rewriting safety or graph logic.
 
-## Non-goals
-
-Marga does not claim hardware/RF C-V2X validation during this hackathon, autonomous vehicle control, perfect prediction of human or animal intent, or nationwide microscopic simulation in a browser.
-
+Marga does not claim autonomous vehicle control, perfect prediction of human intent, or city-scale production traffic optimization.

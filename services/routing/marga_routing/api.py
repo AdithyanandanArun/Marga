@@ -238,11 +238,15 @@ async def stream_routes(ws: WebSocket) -> None:
     try:
         await ws.send_json({"event_type": "routing.connected", "ts": _now()})
         while True:
-            payload = await asyncio.wait_for(queue.get(), timeout=30.0)
-            change = json.loads(payload)
-            await ws.send_json({"event_type": "route.changed", "data": change})
-    except TimeoutError:
-        await ws.send_json({"event_type": "routing.ping", "ts": _now()})
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=30.0)
+                change = json.loads(payload)
+                await ws.send_json({"event_type": "route.changed", "data": change})
+            except TimeoutError:
+                # A heartbeat keeps an idle proxy connection alive. It must
+                # not end this handler — doing so forced every dashboard tab
+                # into a reconnect loop every thirty seconds.
+                await ws.send_json({"event_type": "routing.ping", "ts": _now()})
     except WebSocketDisconnect:
         pass
     finally:

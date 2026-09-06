@@ -57,6 +57,12 @@ async def observe_actor(state: VehicleState) -> None:
         }})
 
 
+async def retire_actor(actor_id: str) -> None:
+    """Remove departed actors from the radio mesh as well as the world."""
+    _last_observation_at.pop(actor_id, None)
+    await manager.remove_node(actor_id)
+
+
 def _transport_state(connectivity: str) -> str:
     if connectivity == "FULL":
         return "CONNECTED"
@@ -110,9 +116,12 @@ async def stream_v2x(ws: WebSocket) -> None:
     _subscribers.append(queue)
     try:
         while True:
-            await ws.send_json(await asyncio.wait_for(queue.get(), timeout=30.0))
-    except TimeoutError:
-        await ws.send_json({"type": "v2x.ping"})
+            try:
+                await ws.send_json(await asyncio.wait_for(queue.get(), timeout=30.0))
+            except TimeoutError:
+                # Keep the socket alive without closing it. A timeout is an
+                # idle interval, not a disconnected PC5 client.
+                await ws.send_json({"type": "v2x.ping"})
     except WebSocketDisconnect:
         pass
     finally:

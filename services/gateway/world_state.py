@@ -151,6 +151,11 @@ def prune_stale_entities(ttl_s: float = DEFAULT_ACTOR_TTL_S) -> list[dict[str, s
 async def sweep_stale_entities(ttl_s: float = DEFAULT_ACTOR_TTL_S) -> int:
     """Prune abandoned actors and tell every subscriber they are gone."""
     deletes = prune_stale_entities(ttl_s)
+    from services.gateway.v2x_bridge import retire_actor as retire_edge_actor
+
+    for record in deletes:
+        if record["entity_type"] == "vehicle":
+            await retire_edge_actor(record["entity_id"])
     if deletes:
         logger.info("evicted %d stale entities (no report in %.0fs)", len(deletes), ttl_s)
         _notify(_world_delta("delta", [], deletes))
@@ -532,6 +537,9 @@ async def retire_actor(actor_id: str) -> dict[str, str]:
     _last_seen.pop(("vehicle", actor_id), None)
     if actor is None:
         raise HTTPException(status_code=404, detail=f"Actor {actor_id!r} not in world state")
+    from services.gateway.v2x_bridge import retire_actor as retire_edge_actor
+
+    await retire_edge_actor(actor_id)
     _notify(_world_delta("delta", [], [{"entity_type": "vehicle", "entity_id": actor_id}]))
     return {"actor_id": actor_id, "status": "retired"}
 

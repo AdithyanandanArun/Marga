@@ -5,7 +5,7 @@ const HAZARD_COLORS: Record<string, [number, number, number]> = {
   POTHOLE: [251, 146, 60],
   BUMP: [234, 179, 8],
   DEBRIS: [155, 161, 176],
-  FLOOD: [59, 130, 246],
+  FLOOD: [234, 179, 8],
   LANDSLIDE: [168, 85, 47],
   ANIMAL: [251, 191, 36],
   STALLED_VEHICLE: [248, 113, 113],

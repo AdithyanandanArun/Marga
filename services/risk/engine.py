@@ -16,8 +16,8 @@ class RiskPolicy:
     """Versioned, map-independent safety thresholds."""
 
     version: str = "trajectory-ttc-v1"
-    horizon_s: float = 8.0
-    base_clearance_m: float = 2.5
+    horizon_s: float = 9.5
+    base_clearance_m: float = 3.5
     minimum_relative_speed_mps: float = 0.1
 
 
@@ -59,8 +59,6 @@ class RiskEngine:
         closest_east = east + relative_velocity[0] * time_to_conflict
         closest_north = north + relative_velocity[1] * time_to_conflict
         min_distance = (closest_east**2 + closest_north**2) ** 0.5
-        predicted_first = predict_trajectory(first, horizon_s=self.policy.horizon_s)
-        predicted_second = predict_trajectory(second, horizon_s=self.policy.horizon_s)
         combined_uncertainty = first.position_uncertainty_m + second.position_uncertainty_m
         clearance = self.policy.base_clearance_m + combined_uncertainty
         if min_distance > clearance or time_to_conflict >= self.policy.horizon_s:
@@ -81,6 +79,10 @@ class RiskEngine:
             risk_type = RiskType.REAR_END
         else:
             risk_type = RiskType.INTERSECTION_CONFLICT
+        # Allocate full trajectories only for accepted conflicts. Rejected
+        # pairs never consume them; this preserves the exact risk policy.
+        predicted_first = predict_trajectory(first, horizon_s=self.policy.horizon_s)
+        predicted_second = predict_trajectory(second, horizon_s=self.policy.horizon_s)
         closeness = max(0.0, min(1.0, 1.0 - min_distance / clearance))
         imminence = 1.0 - time_to_conflict / self.policy.horizon_s
         severity = max(0.0, min(1.0, 0.55 * closeness + 0.45 * imminence))

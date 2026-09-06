@@ -5,7 +5,7 @@ import { selectPrimaryRisk } from '../../utils/risk';
 const RISK_COLORS: Record<string, [number, number, number, number]> = {
   HIGH: [239, 68, 68, 150],
   MEDIUM: [234, 179, 8, 120],
-  LOW: [59, 130, 246, 80],
+  LOW: [34, 197, 94, 80],
 };
 
 function riskColor(severity: number): [number, number, number, number] {

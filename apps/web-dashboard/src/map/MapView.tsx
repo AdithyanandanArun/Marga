@@ -36,7 +36,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const deckRef = useRef<Deck | null>(null);
-  const animRef = useRef<number>(0);
+  const refreshLayersRef = useRef<() => void>(() => {});
   const hasAutoFramedRef = useRef(false);
   const onMapClickRef = useRef(onMapClick);
   const [mapLoaded, setMapLoaded] = useState(false);
@@ -111,7 +111,7 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
       onMapClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
     });
 
-    map.on('moveend', () => {
+    const onMoveEnd = () => {
       const center = map.getCenter();
       setViewport({
         latitude: center.lat,
@@ -120,7 +120,11 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
         bearing: map.getBearing(),
         pitch: map.getPitch(),
       });
-    });
+      // Zoom affects marker size; pan/zoom should refresh once on completion,
+      // not force a full scene rebuild on every mouse-move frame.
+      refreshLayersRef.current();
+    };
+    map.on('moveend', onMoveEnd);
 
     mapRef.current = map;
 
@@ -167,11 +171,12 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
     });
 
     deckRef.current = deck;
+    requestAnimationFrame(() => refreshLayersRef.current());
 
     return () => {
       // See SimulationStudio: a throwing GL teardown must not escape cleanup,
       // or React skips the remount and the dashboard renders without a map.
-      cancelAnimationFrame(animRef.current);
+      map.off('moveend', onMoveEnd);
       try { deck.finalize(); } catch { /* context already lost */ }
       try { map.remove(); } catch { /* map already disposed */ }
     };
@@ -215,15 +220,15 @@ export function MapView({ onEntityClick, onMapClick, placementMode = false, road
       showUncertainty, showTrajectories, showRiskZones, showV2XLinks, showSignals, showHazards, showRoadEvents, showRSUs,
       selectedEntityId, viewport.zoom, roadScene]);
 
+  // Keep the map creation effect independent from React's changing closure,
+  // while letting it request the most recent scene on a completed map move.
+  refreshLayersRef.current = updateLayers;
+
   useEffect(() => {
-    const loop = () => {
-      // Reschedule unconditionally: a layer that fails to build for one frame
-      // must not stop the map from redrawing on every later frame.
-      try { updateLayers(); } catch { /* skip this frame's layer rebuild */ }
-      animRef.current = requestAnimationFrame(loop);
-    };
-    animRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animRef.current);
+    // World-state deltas already arrive as coherent frames. Rebuilding Deck
+    // layers only when that state changes is vastly cheaper than rebuilding
+    // static geometry sixty times per second.
+    try { updateLayers(); } catch { /* renderer may be remounting */ }
   }, [updateLayers]);
 
   return (

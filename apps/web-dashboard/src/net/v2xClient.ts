@@ -38,7 +38,7 @@ export class V2XStream {
   private socket: ReconnectingSocket;
 
   constructor() {
-    const wsBase = `ws://${window.location.host}`;
+    const wsBase = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
     this.socket = new ReconnectingSocket({
       url: `${wsBase}/v1/stream/v2x`,
       onMessage: (data) => this.handleMessage(data),

@@ -18,6 +18,6 @@ export function createV2XLinksLayer(vehicles: VehicleState[], rsus: RSUState[]) 
     id: 'v2x-links', data: links,
     getSourcePosition: (d: { vehicle: VehicleState }) => [d.vehicle.position.lon, d.vehicle.position.lat],
     getTargetPosition: (d: { rsu: RSUState }) => [d.rsu.position.lon, d.rsu.position.lat],
-    getColor: [167, 139, 250, 110], getWidth: 1, widthUnits: 'pixels', pickable: false,
+    getColor: [34, 197, 94, 110], getWidth: 1, widthUnits: 'pixels', pickable: false,
   });
 }

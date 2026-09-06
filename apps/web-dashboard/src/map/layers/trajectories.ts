@@ -15,5 +15,5 @@ export function createTrajectoriesLayer(vehicles: VehicleState[], focusActorIds?
     return { vehicle, points: points as [number, number][] };
   });
   return new PathLayer<{ vehicle: VehicleState; points: [number, number][] }>({ id: 'trajectories', data: paths, getPath: (d) => d.points,
-    getColor: [74, 125, 255, 150], getWidth: 2, widthUnits: 'pixels', pickable: false });
+    getColor: [251, 146, 60, 150], getWidth: 2, widthUnits: 'pixels', pickable: false });
 }

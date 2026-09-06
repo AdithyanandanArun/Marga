@@ -28,26 +28,47 @@ export class ReconnectingSocket {
 
   connect(): void {
     if (this.disposed) return;
+    // A reconnect timer and an already-opening socket are both valid pending
+    // connection attempts. Starting another one creates socket storms, which
+    // is especially damaging when the gateway is briefly busy processing a
+    // large traffic frame.
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    let socket: WebSocket;
     try {
-      this.ws = new WebSocket(this.opts.url);
+      socket = new WebSocket(this.opts.url);
     } catch {
       this.scheduleReconnect();
       return;
     }
-    this.ws.onopen = () => {
+    this.ws = socket;
+    socket.onopen = () => {
+      if (this.disposed || this.ws !== socket) return;
       this.currentDelay = this.opts.reconnectDelay;
       this.opts.onConnectionChange?.(true);
     };
-    this.ws.onmessage = (event) => this.opts.onMessage(event.data);
-    this.ws.onclose = () => {
+    socket.onmessage = (event) => {
+      if (this.ws === socket && !this.disposed) this.opts.onMessage(event.data);
+    };
+    socket.onclose = () => {
+      // Closing a superseded socket must not mark a newer live connection as
+      // offline or schedule a duplicate reconnect.
+      if (this.disposed || this.ws !== socket) return;
+      this.ws = null;
       this.opts.onConnectionChange?.(false);
       this.scheduleReconnect();
     };
-    this.ws.onerror = () => this.ws?.close();
+    socket.onerror = () => {
+      if (this.ws === socket) socket.close();
+    };
   }
 
   private scheduleReconnect(): void {
     if (this.disposed) return;
+    if (this.reconnectTimer || this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return;
     this.reconnectTimer = setTimeout(() => this.connect(), this.currentDelay);
     this.currentDelay = Math.min(this.currentDelay * 1.5, this.opts.maxReconnectDelay);
   }
@@ -55,7 +76,14 @@ export class ReconnectingSocket {
   disconnect(): void {
     this.disposed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.ws?.close();
+    this.reconnectTimer = null;
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+    }
     this.ws = null;
   }
 }

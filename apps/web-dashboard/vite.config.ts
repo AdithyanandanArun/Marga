@@ -13,7 +13,9 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/v1': {
-        target: 'http://localhost:8000',
+        // The local gateway binds to IPv4. Pinning this avoids a browser/dev
+        // session depending on how `localhost` resolves on the host.
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         ws: true,
       },
@@ -21,7 +23,7 @@ export default defineConfig({
       // mounted in the gateway without a /v1 prefix — proxy it separately
       // rather than renaming it out of step with the backend's own routes.
       '/graph': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         ws: true,
       },

@@ -122,6 +122,7 @@ class EdgeV2XManager:
                 return
             for existing_node in self._nodes.values():
                 existing_node.transport.unregister_peer(actor_id)
+                existing_node.remove_peer(actor_id)
                 node.transport.unregister_peer(existing_node.actor_id)
 
         await node.stop()
@@ -152,6 +153,7 @@ class EdgeV2XManager:
             logger.warning("Unknown actor %s, creating node", state.actor_id)
             node = await self.create_node(state.actor_id)
 
+        previous_neighbours = set(node.get_neighbours())
         activation = node.update_state(state)
 
         # The moved node can also leave another node's PC5 range. Prune those
@@ -159,12 +161,16 @@ class EdgeV2XManager:
         # active until the other actor happens to publish again.
         for peer_node in self._nodes.values():
             if peer_node.actor_id != state.actor_id:
-                peer_node.refresh_direct_peers()
+                peer_node.refresh_direct_peers(only_if_changed=True)
 
         # PC5 neighbour-discovery handshake.  Only peers whose transport has
         # measured the new node in range can answer with their latest state.
-        for peer_node in self._nodes.values():
-            if peer_node.actor_id != state.actor_id and state.actor_id in peer_node.get_neighbours():
+        # Discovery replies are needed only on entry into radio range. Asking
+        # every neighbour to rebroadcast on every tick multiplies deliveries
+        # and risk evaluations without adding any new observations.
+        for peer_id in set(node.get_neighbours()) - previous_neighbours:
+            peer_node = self._nodes.get(peer_id)
+            if peer_node is not None:
                 await peer_node.broadcast_state()
 
         # Broadcast state to peers via PC5.

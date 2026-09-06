@@ -47,10 +47,14 @@ def register_signal_executor(executor: Callable[[dict[str, object]], None] | Non
 
 _MAX_PENDING_COMMANDS = 256
 _pending_commands: list[dict[str, Any]] = []
+_command_history: list[dict[str, Any]] = []
 
 
 def _queue_command(command: dict[str, object]) -> None:
     _pending_commands.append({**command, "issued_at": datetime.now(UTC).isoformat()})
+    if command.get("action") != "HOLD":
+        _command_history.append(dict(_pending_commands[-1]))
+        del _command_history[:-10]
     if len(_pending_commands) > _MAX_PENDING_COMMANDS:
         del _pending_commands[:-_MAX_PENDING_COMMANDS]
 
@@ -61,6 +65,7 @@ def pending_command_count() -> int:
 
 def reset_pending_commands() -> None:
     _pending_commands.clear()
+    _command_history.clear()
 
 
 # An applied action must reach the simulator by default; without this the
@@ -130,6 +135,12 @@ async def register_topology(topology: SignalJunctionTopology) -> dict[str, Any]:
 async def list_topologies() -> dict[str, Any]:
     """Report which junctions the controller can actually act on."""
     return {"junction_ids": list(signal_controller.junction_ids)}
+
+
+@router.get("/commands/history")
+async def command_history() -> dict[str, Any]:
+    """Read issued timing changes without consuming simulator commands."""
+    return {"commands": list(_command_history)}
 
 
 @router.get("/commands/pending")

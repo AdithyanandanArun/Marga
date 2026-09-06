@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, AlertTriangle, Crosshair, Layers, Radio, Search, Settings, ShieldCheck, Signal, TrainTrack, Wifi, WifiOff } from 'lucide-react';
+import { Activity, AlertTriangle, Crosshair, Layers, Radio, Search, Settings, Signal, TrainTrack, Wifi, WifiOff } from 'lucide-react';
 import { MapView } from '../map/MapView';
+import { CurrentEvents, useCurrentEventFeed } from './CurrentEvents';
 import { AlertPanel } from './AlertPanel';
 import { Inspector } from './Inspector';
 import { SystemHealth } from './SystemHealth';
@@ -14,7 +15,7 @@ import { networkTelemetry } from '../simulation/networkTelemetry';
 import { useUIStore } from '../state/uiStore';
 import { useWorldStore } from '../state/worldStore';
 import { useV2XStore, selectPc5Local } from '../state/v2xStore';
-import type { RiskEvent, VehicleState } from '../types/canonical';
+import type { VehicleState } from '../types/canonical';
 import { selectPrimaryRisk } from '../utils/risk';
 import { mpsToKmh } from '../utils/geo';
 
@@ -22,16 +23,9 @@ type AdvancedTab = 'alerts' | 'inspector' | 'health' | 'layers';
 type Tone = 'good' | 'warning' | 'muted';
 const TONE: Record<Tone, string> = { good: 'var(--accent-green)', warning: 'var(--accent-yellow)', muted: 'var(--text-secondary)' };
 
-function actorName(actor: VehicleState | undefined, fallback: string): string {
-  return actor ? `${actor.actor_type.toLowerCase()} ${actor.actor_id.replace(/^.*[-_:]/, '')}` : fallback;
-}
-function riskHeadline(risk: RiskEvent | undefined, vehicles: Map<string, VehicleState>): string {
-  if (!risk) return 'No active conflict';
-  const [a, b] = risk.affected_actor_ids;
-  return `${actorName(vehicles.get(a), a)} and ${actorName(vehicles.get(b), b)} are approaching the same path`;
-}
-
 export function Dashboard() {
+  useCurrentEventFeed();
+  const [eventsOpen, setEventsOpen] = useState(true);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedTab, setAdvancedTab] = useState<AdvancedTab>('alerts');
   const [gatewayConnected, setGatewayConnected] = useState(false);
@@ -84,6 +78,7 @@ export function Dashboard() {
         <Pill icon={gatewayConnected ? <Activity size={14} /> : <WifiOff size={14} />} label={gatewayConnected ? 'Gateway live' : 'Gateway reconnecting'} tone={gatewayConnected ? 'good' : 'muted'} />
         <Pill icon={directV2x ? <Radio size={14} /> : <WifiOff size={14} />} label={directV2x ? 'Direct V2X ready' : 'Direct V2X unavailable'} tone={directV2x ? 'good' : 'warning'} />
         <Link to="/simulation" style={{ ...s.advancedButton, textDecoration: 'none' }}><TrainTrack size={15} /> Junction Simulator</Link>
+        <button onClick={() => { setEventsOpen((value) => !value); setAdvancedOpen(false); }} style={s.advancedButton} aria-expanded={eventsOpen} aria-controls="current-events">Current Events</button>
         <button onClick={() => setAdvancedOpen((value) => !value)} style={s.advancedButton} aria-expanded={advancedOpen}><Settings size={15} /> Advanced</button>
       </div>
     </header>
@@ -102,16 +97,9 @@ export function Dashboard() {
             tone={pc5Local ? 'good' : 'muted'}
           />
         </section>
-        <section style={{ ...s.incidentCard, ...(primaryRisk ? s.incidentActive : {}) }} aria-live="polite">
-          <div style={s.eyebrow}>{primaryRisk ? <><AlertTriangle size={15} /> COLLISION RISK</> : <><ShieldCheck size={15} /> ROAD SAFETY MONITOR</>}</div>
-          <h1 style={s.incidentTitle}>{riskHeadline(primaryRisk, vehicles)}</h1>
-          {primaryRisk ? <>
-            <div style={s.metricRow}><Metric label="Time to conflict" value={`${primaryRisk.time_to_conflict_s.toFixed(1)} s`} /><Metric label="Confidence" value={`${Math.round(primaryRisk.confidence * 100)}%`} /></div>
-            <p style={s.incidentExplanation}>Predicted paths overlap at the junction. Reduce speed before the conflict point; the warning stays available over the local safety link.</p>
-          </> : <p style={s.incidentExplanation}>Marga is receiving only verified road telemetry. When a conflict is predicted, this panel will show one clear reason and the safety action.</p>}
-        </section>
         <div style={s.mapCaption}><span><i style={s.legendDot} />Road users</span><span><i style={{ ...s.legendDot, background: 'var(--accent-red)' }} />Predicted conflict</span><span>{vehicles.size + pedestrians.size} tracked</span></div>
       </div>
+      {eventsOpen && !advancedOpen && <CurrentEvents onClose={() => setEventsOpen(false)} />}
       {advancedOpen && <aside style={s.advancedPanel} aria-label="Advanced system detail">
         <div style={s.advancedHeading}><div><span style={s.advancedKicker}>SUPPORTING DETAIL</span><strong>Advanced monitor</strong></div><button onClick={() => setAdvancedOpen(false)} style={s.closeButton} aria-label="Close advanced monitor">×</button></div>
         <nav style={s.tabs} aria-label="Advanced views">
@@ -131,7 +119,6 @@ export function Dashboard() {
 
 function Pill({ icon, label, tone }: { icon: React.ReactNode; label: string; tone: Tone }) { return <span style={{ ...s.statusPill, color: TONE[tone] }}>{icon}{label}</span>; }
 function Status({ icon, label, value, detail, tone }: { icon: React.ReactNode; label: string; value: string; detail: string; tone: Tone }) { return <div style={s.statusCard}><span style={{ ...s.cardIcon, color: TONE[tone] }}>{icon}</span><div><div style={s.statusLabel}>{label}</div><strong style={s.statusValue}>{value}</strong><div style={s.statusDetail}>{detail}</div></div></div>; }
-function Metric({ label, value }: { label: string; value: string }) { return <div><div style={s.metricLabel}>{label}</div><strong style={s.metricValue}>{value}</strong></div>; }
 
 const s: Record<string, React.CSSProperties> = {
   shell: { height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-primary)' },

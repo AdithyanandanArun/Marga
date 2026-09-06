@@ -3,13 +3,13 @@ import type { VehicleState, PedestrianState, DynamicActorObservation } from '../
 import { dimensions } from '../../simulation/vehicleBody';
 
 const ACTOR_COLORS: Record<string, [number, number, number]> = {
-  CAR: [74, 125, 255],
-  BIKE: [34, 211, 238],
-  AUTO: [251, 191, 36],
-  BUS: [167, 139, 250],
+  CAR: [34, 197, 94],
+  BIKE: [251, 146, 60],
+  AUTO: [234, 179, 8],
+  BUS: [251, 146, 60],
   TRUCK: [251, 146, 60],
-  AMBULANCE: [248, 113, 113],
-  OTHER: [155, 161, 176],
+  AMBULANCE: [239, 68, 68],
+  OTHER: [34, 197, 94],
 };
 
 const PEDESTRIAN_COLOR: [number, number, number] = [52, 211, 153];
@@ -50,8 +50,8 @@ export function createActorLayer(
         data: vehicles,
         getPosition: (d: VehicleState) => [d.position.lon, d.position.lat],
         getRadius: (d: VehicleState) => d.position_uncertainty_m,
-        getFillColor: [74, 125, 255, 30],
-        getLineColor: [74, 125, 255, 60],
+        getFillColor: [234, 179, 8, 30],
+        getLineColor: [234, 179, 8, 60],
         lineWidthMinPixels: 1,
         stroked: true,
         filled: true,
@@ -67,6 +67,7 @@ export function createActorLayer(
   layers.push(
     new PolygonLayer({
       id: 'vehicle-bodies', data: bodies,
+
       getPolygon: (d: VehicleBody) => d.polygon,
       getFillColor: (d: VehicleBody) => d.vehicle.actor_id === selectedId ? SELECTED_COLOR : (ACTOR_COLORS[d.vehicle.actor_type] ?? ACTOR_COLORS.OTHER),
       getLineColor: [15, 17, 23, 255],
@@ -89,6 +90,7 @@ export function createActorLayer(
       new ScatterplotLayer({
         id: 'pedestrians',
         data: pedestrians,
+
         getPosition: (d: PedestrianState) => [d.position.lon, d.position.lat],
         getRadius: zoom > 15 ? 7 : 5,
         getFillColor: [...PEDESTRIAN_COLOR, 245] as [number, number, number, number],

@@ -6,8 +6,8 @@ Matches the 4-junction network in networkEngine.ts:
   Rail Crossing(12.9550, 77.6160) — 440 m west
   South T      (12.9510, 77.6200) — 440 m south
 
-Intermediate waypoints are added on each approach road so there are
-multiple hops and A* has meaningful path alternatives.
+Intermediate waypoints subdivide the existing approach roads. Removed
+cut-through roads are deliberately absent from the routing topology.
 """
 
 from __future__ import annotations
@@ -41,10 +41,6 @@ def build_mock_graph() -> MobilityGraph:
     hub_to_rail_mid = _offset(*hub, 0, -220)
     hub_to_south_mid = _offset(*hub, -220, 0)
 
-    # Extra nodes for detour diversity
-    north_bypass = _offset(*hub, 80, 220)
-    south_bypass = _offset(*hub, -80, 220)
-
     nodes = [
         Node("hub",           HUB_LAT, HUB_LON,         "Signalised Hub"),
         Node("roundabout",    *rbt,                       "Roundabout"),
@@ -53,15 +49,12 @@ def build_mock_graph() -> MobilityGraph:
         Node("hub_rbt_mid",   *hub_to_rbt_mid,            "Hub→Rbt Midpoint"),
         Node("hub_rail_mid",  *hub_to_rail_mid,           "Hub→Rail Midpoint"),
         Node("hub_south_mid", *hub_to_south_mid,          "Hub→South Midpoint"),
-        Node("north_bypass",  *north_bypass,              "North Bypass"),
-        Node("south_bypass",  *south_bypass,              "South Bypass"),
     ]
     for n in nodes:
         g.add_node(n)
 
     # ── Edge definitions (bidirectional) ─────────────────────────────────
-    # Each major road segment gets two edges (each direction) and one alternative
-    # bypass so the pathfinder has meaningful choices.
+    # Each major road segment gets two directed edges.
 
     segments: list[tuple[str, str, float, str]] = [
         # (src, dst, length_m, edge_id_prefix)
@@ -80,17 +73,6 @@ def build_mock_graph() -> MobilityGraph:
         ("south_t",       "hub_south_mid",  220, "e_south_hub_a"),
         ("hub_south_mid", "hub",            220, "e_south_hub_b"),
 
-        # North bypass (longer but avoids hub signal)
-        ("hub_rail_mid",  "north_bypass",   180, "e_bypass_n_a"),
-        ("north_bypass",  "hub_rbt_mid",    180, "e_bypass_n_b"),
-        ("hub_rbt_mid",   "north_bypass",   180, "e_bypass_n_c"),
-        ("north_bypass",  "hub_rail_mid",   180, "e_bypass_n_d"),
-
-        # South bypass
-        ("hub_south_mid", "south_bypass",   180, "e_bypass_s_a"),
-        ("south_bypass",  "hub_rbt_mid",    180, "e_bypass_s_b"),
-        ("hub_rbt_mid",   "south_bypass",   180, "e_bypass_s_c"),
-        ("south_bypass",  "hub_south_mid",  180, "e_bypass_s_d"),
     ]
 
     for src, dst, length, eid in segments:

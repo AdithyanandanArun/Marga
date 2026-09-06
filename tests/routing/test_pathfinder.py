@@ -87,6 +87,26 @@ class TestFindPath:
         path, cost = find_path(g, "rail_crossing", "south_t")
         assert path and cost < float("inf")
 
+    def test_removed_cut_is_never_used_when_hub_corridor_is_congested(self):
+        """Congestion cannot justify routing onto a road that was removed."""
+        g = build_mock_graph()
+
+        normal_path, _ = find_path(g, "rail_crossing", "roundabout")
+        assert "hub" in [node_id for node_id, _ in normal_path]
+
+        for edge_id in ("e_hub_rail_b", "e_hub_rbt_a"):
+            g.edge(edge_id).metrics = EdgeMetrics(
+                avg_speed_mps=1.0,
+                vehicle_count=38,
+                capacity_ratio=0.95,
+                gps_confidence=0.92,
+            )
+
+        rerouted_path, _ = find_path(g, "rail_crossing", "roundabout")
+        rerouted_edges = {edge_id for _, edge_id in rerouted_path if edge_id}
+        assert "hub" in [node_id for node_id, _ in rerouted_path]
+        assert not any(edge_id.startswith("e_cut_") for edge_id in rerouted_edges)
+
 
 class TestPathHelpers:
     def test_path_to_geometry(self):

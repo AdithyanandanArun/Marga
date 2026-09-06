@@ -63,7 +63,7 @@ class EdgeV2XNode:
         self._active_risk: RiskEvent | None = None
         self._active_factors: PrioritizationFactors | None = None
         self._internet_available: bool = True
-        self._received_messages: list[V2XMessage] = []
+        self._received_message_count = 0
         self._subscription_id: str | None = None
         self._active_signature: tuple[str, tuple[str, ...]] | None = None
         self._message_listeners: list[Callable[[V2XMessage], Awaitable[None] | None]] = []
@@ -139,9 +139,11 @@ class EdgeV2XNode:
         # local safety decision.
         return self.refresh_direct_peers()
 
-    def refresh_direct_peers(self) -> RiskEvent | None:
+    def refresh_direct_peers(self, *, only_if_changed: bool = False) -> RiskEvent | None:
         """Discard out-of-range peer observations and refresh local risk state."""
         in_range = set(self._transport.nearby_nodes())
+        if only_if_changed and self._peers.keys() <= in_range:
+            return None
         self._peers = {peer_id: peer for peer_id, peer in self._peers.items() if peer_id in in_range}
         return self._evaluate_risks()
 
@@ -155,6 +157,7 @@ class EdgeV2XNode:
     def remove_peer(self, peer_id: str) -> None:
         """Remove a peer that has gone out of range or disconnected."""
         self._peers.pop(peer_id, None)
+        self._evaluate_risks()
 
     def get_neighbours(self) -> list[str]:
         """Return IDs of peers currently within PC5 range."""
@@ -267,7 +270,8 @@ class EdgeV2XNode:
 
     async def _on_message(self, message: V2XMessage) -> None:
         """Handle an incoming V2X message from a peer."""
-        self._received_messages.append(message)
+        # Stats need a count, not an unbounded duplicate of every PC5 payload.
+        self._received_message_count += 1
 
         if message.topic == "actor.state.updated":
             # Parse peer state from payload.
@@ -337,5 +341,5 @@ class EdgeV2XNode:
             "active_risk_type": self._active_risk.type.value if self._active_risk else None,
             "active_risk_score": self._active_factors.composite_score if self._active_factors else None,
             "transport_stats": self._transport.stats,
-            "received_message_count": len(self._received_messages),
+            "received_message_count": self._received_message_count,
         }
