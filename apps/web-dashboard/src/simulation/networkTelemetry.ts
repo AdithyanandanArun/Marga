@@ -28,8 +28,10 @@ const pedestrianCrossings: Point[][] = FEATURE_NETWORK.junctions.flatMap((juncti
 interface PedestrianProfile {
   speedMps: number;
   direction: 1 | -1;
-  pauseUntilMs: number;
-  nextPauseAtMs: number;
+  /** A person makes one crossing, then leaves the simulated road entirely. */
+  active: boolean;
+  startedAtMs: number | null;
+  nextStartAtMs: number | null;
 }
 
 const pedestrianPlans = pedestrianCrossings.flatMap((crossing, crossingIndex) => [
@@ -41,11 +43,14 @@ const pedestrianProfiles: PedestrianProfile[] = pedestrianPlans.map((plan, index
   // Stable human walking speeds: slower walkers and brisk walkers, all within
   // a realistic range rather than a new random speed every animation frame.
   speedMps: 0.55 + Math.random() * 0.85,
-  // Each crossing gets a pair moving in opposite directions. Additional
-  // speed/pause variation keeps them from looking like cloned actors.
+  // Directions are paired at a crossing, but their schedules are independent
+  // so there is no permanent stream of people walking back and forth.
   direction: plan.direction,
-  pauseUntilMs: 0,
-  nextPauseAtMs: 3_000 + Math.random() * 4_000 + index * 700,
+  active: false,
+  startedAtMs: null,
+  // Stagger first appearances. The first person arrives soon enough to be
+  // visible in a demo; each subsequent candidate is less frequent.
+  nextStartAtMs: null,
 }));
 
 export interface NetworkFrame {
@@ -78,7 +83,7 @@ class NetworkTelemetryRuntime {
   private topologiesRegistered = false;
   private lastSimulationTimestamp = 0;
   private simulationFrame: ReturnType<JunctionNetworkEngine['tick']> | null = null;
-  private pedestrianProgress: number[] = pedestrianPlans.map((plan) => plan.direction === 1 ? 0.08 : 0.92);
+  private pedestrianProgress: number[] = pedestrianPlans.map((plan) => plan.direction === 1 ? 0.02 : 0.98);
   private lastPedestrianTimestamp = 0;
   private readonly producerId = crypto.randomUUID();
   private ownsProducerLease = false;
@@ -89,44 +94,50 @@ class NetworkTelemetryRuntime {
       ? Math.min(0.5, Math.max(0, timestampMs - this.lastPedestrianTimestamp) / 1000)
       : 0;
     this.lastPedestrianTimestamp = timestampMs;
-    return pedestrianPlans.map((plan, index) => {
+    return pedestrianPlans.flatMap((plan, index) => {
       const crossing = plan.crossing;
       const [start, end] = crossing;
       const profile = pedestrianProfiles[index];
+      if (!profile.active) {
+        if (profile.nextStartAtMs === null) {
+          profile.nextStartAtMs = timestampMs + 4_000 + index * 15_000 + Math.random() * 8_000;
+        }
+        if (timestampMs < profile.nextStartAtMs) return [];
+        profile.active = true;
+        profile.startedAtMs = timestampMs;
+        this.pedestrianProgress[index] = profile.direction === 1 ? 0.02 : 0.98;
+      }
       let progress = this.pedestrianProgress[index];
       const current: Point = [
         start[0] + (end[0] - start[0]) * progress,
         start[1] + (end[1] - start[1]) * progress,
       ];
-      const crossingActive = progress > 0.04 && progress < 0.96;
-      const movingVehicleNear = crossingActive && vehicles.some((vehicle) =>
-        vehicle.speed_mps > 0.35
-        && distanceMeters([vehicle.position.lon, vehicle.position.lat], current, current[1]) < 14,
-      );
-      if (timestampMs >= profile.nextPauseAtMs && timestampMs >= profile.pauseUntilMs) {
-        profile.pauseUntilMs = timestampMs + 500 + ((index * 431) % 1_300);
-        profile.nextPauseAtMs = profile.pauseUntilMs + 3_500 + ((index * 719) % 4_500);
-      }
-      const canWalk = !movingVehicleNear && timestampMs >= profile.pauseUntilMs;
-      if (canWalk && dtS > 0) {
+      // Once a person starts a crossing, vehicles yield. Do not make them
+      // repeatedly stop in the carriageway or reverse at the far kerb.
+      if (dtS > 0) {
         const lengthM = distanceMeters(start, end, current[1]);
         progress += profile.direction * (profile.speedMps * dtS) / Math.max(1, lengthM);
-        if (progress >= 0.98 || progress <= 0.02) {
-          progress = Math.max(0.02, Math.min(0.98, progress));
-          profile.direction = profile.direction === 1 ? -1 : 1;
+        if (progress >= 0.98 || progress <= 0.02 || (profile.startedAtMs !== null && timestampMs - profile.startedAtMs >= 30_000)) {
+          // The crossing has completed (or its safe maximum duration elapsed):
+          // remove this actor and schedule a different future crossing.
+          profile.active = false;
+          profile.startedAtMs = null;
+          profile.nextStartAtMs = timestampMs + 60_000 + Math.random() * 60_000;
+          this.pedestrianProgress[index] = profile.direction === 1 ? 0.02 : 0.98;
+          return [];
         }
         this.pedestrianProgress[index] = progress;
       }
       const lon = start[0] + (end[0] - start[0]) * progress;
       const lat = start[1] + (end[1] - start[1]) * progress;
       const heading = (Math.atan2(end[0] - start[0], end[1] - start[1]) * 180 / Math.PI + 360) % 360;
-      return {
+      return [{
         schema_version: '1.0', actor_id: `network-pedestrian-${index}`, ts: new Date().toISOString(),
-        position: { lat, lon }, position_uncertainty_m: 1.2, speed_mps: canWalk ? profile.speedMps : 0,
+        position: { lat, lon }, position_uncertainty_m: 1.2, speed_mps: profile.speedMps,
         heading_deg: profile.direction === 1 ? heading : (heading + 180) % 360,
         road_segment_id: `crosswalk-${plan.crossingIndex}`, source: 'SIMULATION',
         path_hint: 'zebra-crossing', road_context: 'CROSSWALK', confidence: 0.95,
-      } as PedestrianState;
+      } as PedestrianState];
     });
   }
 

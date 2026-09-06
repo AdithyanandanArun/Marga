@@ -38,7 +38,7 @@ export function useCurrentEventFeed() {
         const episode = prior && Date.parse(risk.ts) - Date.parse(prior) < 15000 ? prior : risk.ts;
         recordEvent({ id, time: risk.ts,
           title: risk.type === 'INTERSECTION_CONFLICT' ? 'Approaching the same path' : `${risk.type.replace(/_/g, ' ').toLowerCase()} conflict`,
-          detail: `${pair.join(' ↔ ')} · TTC ${risk.time_to_conflict_s.toFixed(1)} s · ${Math.round(risk.confidence * 100)}% confidence`,
+          detail: `${pair.join(' ↔ ')} · TTC ${risk.time_to_conflict_s.toFixed(1)} s`,
           color: 'var(--accent-red)',
         }, episode);
       }
@@ -46,7 +46,7 @@ export function useCurrentEventFeed() {
         if (!['ACCIDENT', 'STALLED_VEHICLE'].includes(hazard.type)) continue;
         recordEvent({ id: `hazard:${hazard.hazard_id}`, time: hazard.first_seen,
           title: hazard.type === 'ACCIDENT' ? 'Collision / accident reported' : 'Vehicle blockage reported',
-          detail: `${hazard.hazard_id} · ${Math.round(hazard.confidence * 100)}% confidence · ${hazard.state.toLowerCase()}`,
+          detail: `${hazard.hazard_id} · ${hazard.state.toLowerCase()}`,
           color: 'var(--accent-orange, #fb923c)',
         }, hazard.hazard_id);
       }
